@@ -2,14 +2,24 @@ const state = {
   currentUserId: 1,
   navSections: [
     {
-      title: "业务模块",
+      title: "看板应用",
+      items: [
+        { id: "dashboard", label: "OTP 总览看板", route: "#/dashboard" },
+      ],
+    },
+    {
+      title: "OTP管理",
+      items: [
+        { id: "presign", label: "代签合同/协议映射", route: "#/module/presign" },
+        { id: "contract", label: "合同管理", route: "#/module/contract" },
+        { id: "invoice", label: "回款/发票追踪", route: "#/module/invoice" },
+      ],
+    },
+    {
+      title: "映射数据源",
       items: [
         { id: "salesforce", label: "Salesforce 快照", route: "#/module/salesforce" },
         { id: "pms", label: "PMS 项目清单", route: "#/module/pms" },
-        { id: "presign", label: "代签合同/协议映射", route: "#/module/presign" },
-        { id: "contract", label: "合同管理", route: "#/module/contract" },
-        { id: "invoice", label: "回款/发票跟踪", route: "#/module/invoice" },
-        { id: "dashboard", label: "OTP 总览看板", route: "#/dashboard" },
       ],
     },
     {
@@ -38,7 +48,9 @@ const state = {
   pmsMilestones: [],
   preSignContracts: [],
   preSignLinks: [],
+  preSignPaymentNodes: [],
   contracts: [],
+  contractPaymentNodes: [],
   invoices: [],
   syncJobs: [],
   syncLogs: [],
@@ -94,14 +106,48 @@ const modules = {
     dataKey: "pmsProjects",
     listColumns: [
       { key: "pms_id", label: "PMS ID" },
+      { key: "pid", label: "PID" },
       { key: "project_name", label: "项目名称" },
       { key: "customer", label: "客户" },
       { key: "productType", label: "产品" },
       { key: "project_complexity", label: "复杂度" },
       { key: "project_phase", label: "阶段" },
+      { key: "mcrl0", label: "MCRL0" },
+      { key: "mcrl1", label: "MCRL1" },
+      { key: "mcrl2", label: "MCRL2" },
       { key: "sales_region", label: "销售区域" },
+      { key: "created_at", label: "创建时间" },
+      { key: "created_by", label: "创建人" },
     ],
-    filters: ["pms_id", "project_name", "customer_id", "product_type_id", "sales_region_id", "project_complexity", "project_phase"],
+    formFields: [
+      "pms_id",
+      "pid",
+      "project_name",
+      "customer_id",
+      "product_type_id",
+      "sales_region_id",
+      "project_complexity",
+      "project_phase",
+      "mcrl0",
+      "mcrl1",
+      "mcrl2",
+      "created_at",
+      "created_by",
+    ],
+    filters: [
+      "pms_id",
+      "pid",
+      "project_name",
+      "customer_id",
+      "product_type_id",
+      "sales_region_id",
+      "project_complexity",
+      "project_phase",
+      "mcrl0",
+      "mcrl1",
+      "mcrl2",
+      "created_by",
+    ],
     canEdit: (user) => hasPermission(user, "pms", "change"),
   },
   presign: {
@@ -114,10 +160,9 @@ const modules = {
       { key: "productType", label: "产品" },
       { key: "customer_vehicle_project_name", label: "车型项目" },
       { key: "project_nominal_type", label: "名义类型" },
-      { key: "ocr_status", label: "OCR 状态" },
       { key: "status", label: "状态" },
     ],
-    filters: ["customer_id", "customer_contract_no", "contract_title", "product_type_id", "customer_vehicle_project_name", "project_nominal_type", "ocr_status"],
+    filters: ["customer_id", "customer_contract_no", "contract_title", "product_type_id", "customer_vehicle_project_name", "project_nominal_type", "status"],
     canEdit: (user) => hasPermission(user, "presign", "change"),
   },
   contract: {
@@ -132,6 +177,13 @@ const modules = {
       { key: "signed_date", label: "签署日期" },
       { key: "derivation_status", label: "年度导出状态" },
       { key: "status", label: "状态" },
+    ],
+    formFields: [
+      "presign_contract_id",
+      "signed_file_name",
+      "signed_date",
+      "archive_date",
+      "status",
     ],
     filters: ["customer_id", "product_type_id", "internal_contract_id", "customer_contract_no", "signed_date", "derivation_status"],
     canEdit: (user) => hasPermission(user, "contract", "change"),
@@ -251,20 +303,24 @@ function seedData() {
     const customer = state.master.customers[i % state.master.customers.length];
     const product = state.master.productTypes[i % state.master.productTypes.length];
     const region = state.master.salesRegions[customer.sales_region_id - 1];
+    const pidValue = i < 10 ? String(123450 + i).padStart(6, "0") : "";
+    const mcrlBase = `BM-0009${String(200 + i).padStart(3, "0")}`;
     return {
       id: i + 1,
       pms_id: `PMS-${2000 + i}`,
+      pid: pidValue,
       project_name: `项目 ${i + 1}`,
       customer_id: customer.id,
       product_type_id: product.id,
       sales_region_id: region.id,
       project_complexity: enums.projectComplexity[i % enums.projectComplexity.length],
       project_phase: enums.projectPhase[i % enums.projectPhase.length],
-      mcrl0: `M0-${i}`,
-      mcrl1: `M1-${i}`,
-      mcrl2: `M2-${i}`,
+      mcrl0: `${mcrlBase}`,
+      mcrl1: `${mcrlBase}_001`,
+      mcrl2: `${mcrlBase}_002`,
       source_batch_id: 1,
       created_at: "2024-01-10",
+      created_by: "pmo_chen",
       updated_at: "2024-02-05",
       is_deleted: false,
     };
@@ -354,6 +410,16 @@ function seedData() {
     return links;
   });
 
+  let preNodeId = 1;
+  state.preSignPaymentNodes = state.preSignContracts.flatMap((contract) => {
+    const nodes = [
+      { id: preNodeId++, pre_sign_contract_id: contract.id, seq_no: 1, node_name: "OTS", pay_ratio: 30, pay_amount: 0 },
+      { id: preNodeId++, pre_sign_contract_id: contract.id, seq_no: 2, node_name: "PPAP", pay_ratio: 50, pay_amount: 0 },
+      { id: preNodeId++, pre_sign_contract_id: contract.id, seq_no: 3, node_name: "SOP", pay_ratio: 20, pay_amount: 0 },
+    ];
+    return nodes;
+  });
+
   state.contracts = Array.from({ length: 8 }, (_, i) => {
     const pre = state.preSignContracts[i];
     return {
@@ -381,6 +447,20 @@ function seedData() {
       created_at: "2024-03-01",
       updated_at: "2024-03-10",
     };
+  });
+
+  let contractNodeId = 1;
+  state.contractPaymentNodes = state.contracts.flatMap((contract) => {
+    const preNodes = state.preSignPaymentNodes.filter((n) => n.pre_sign_contract_id === contract.presign_contract_id);
+    return preNodes.map((node) => ({
+      id: contractNodeId++,
+      contract_id: contract.id,
+      seq_no: node.seq_no,
+      node_name: node.node_name,
+      pay_ratio: node.pay_ratio,
+      pay_amount: node.pay_amount,
+      planned_year: 2025,
+    }));
   });
 
   state.invoices = Array.from({ length: 30 }, (_, i) => {
@@ -550,7 +630,6 @@ function renderList(moduleId) {
         <button id="bulkRestore">批量恢复</button>
         <button id="bulkExport">批量导出</button>
         ${moduleId === "invoice" ? '<button id="bulkImport">批量导入(模拟)</button>' : ""}
-        ${moduleId === "presign" ? '<button id="runOcr">运行 OCR</button>' : ""}
       </div>
       <div class="column-toggle">
         ${columns
@@ -563,7 +642,6 @@ function renderList(moduleId) {
       </div>
       <div class="form-actions">
         ${hasPermission(user, moduleId, "add") ? `<button class="primary" id="createBtn">新建</button>` : ""}
-        ${moduleId === "contract" ? `<button id="wizardBtn">合同创建向导</button>` : ""}
       </div>
     </div>
     <div class="panel">
@@ -623,11 +701,6 @@ function renderList(moduleId) {
     });
   }
 
-  if (content.querySelector("#wizardBtn")) {
-    content.querySelector("#wizardBtn").addEventListener("click", () => {
-      location.hash = "#/contracts/wizard";
-    });
-  }
 
   content.querySelectorAll("button[data-action]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -650,7 +723,6 @@ function renderList(moduleId) {
   content.querySelector("#bulkRestore")?.addEventListener("click", () => bulkAction(moduleId, "restore"));
   content.querySelector("#bulkExport")?.addEventListener("click", () => alert("已生成 CSV 导出（模拟）"));
   content.querySelector("#bulkImport")?.addEventListener("click", () => simulateInvoiceImport());
-  content.querySelector("#runOcr")?.addEventListener("click", () => runOcrForSelected());
 }
 
 function formatCell(moduleId, record, key) {
@@ -726,6 +798,7 @@ function renderDetail(moduleId, id) {
         ${Object.entries(record)
           .map(([key, value]) => {
             if (key === "is_deleted") return "";
+            if (moduleId === "presign" && key === "ocr_status") return "";
             return `<div><div class="subtle">${key}</div><div>${value ?? ""}</div></div>`;
           })
           .join("")}
@@ -735,6 +808,7 @@ function renderDetail(moduleId, id) {
       <div class="page-title">关联对象</div>
       ${renderRelated(moduleId, record)}
     </div>
+    ${renderDetailExtras(moduleId, record)}
     <div class="panel">
       <div class="page-title">审计日志</div>
       <div class="audit-log">
@@ -742,6 +816,22 @@ function renderDetail(moduleId, id) {
       </div>
     </div>
   `;
+  if (moduleId === "contract") {
+    const tabs = content.querySelectorAll(".tabs button[data-tab]");
+    const presign = state.preSignContracts.find((p) => p.id === record.presign_contract_id);
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        tabs.forEach((btn) => btn.classList.remove("active"));
+        tab.classList.add("active");
+        const panel = content.querySelector("#filePreviewPanel");
+        if (tab.dataset.tab === "presign-file") {
+          panel.innerHTML = renderFilePreview(presign?.source_file_url || "#", presign?.source_file_type || "pdf");
+        } else {
+          panel.innerHTML = renderFilePreview(record.signed_file_url || "#", record.signed_file_name?.includes(".doc") ? "word" : "pdf");
+        }
+      });
+    });
+  }
 }
 
 function renderRelated(moduleId, record) {
@@ -811,6 +901,139 @@ function renderRelated(moduleId, record) {
   return "<div class='subtle'>暂无关联对象</div>";
 }
 
+function renderDetailExtras(moduleId, record) {
+  if (moduleId === "presign") {
+    const paymentNodes = state.preSignPaymentNodes.filter((n) => n.pre_sign_contract_id === record.id);
+    return `
+      <div class="panel">
+        <div class="page-title">代签文件快照</div>
+        ${renderFilePreview(record.source_file_url || "#", record.source_file_type)}
+      </div>
+      <div class="panel">
+        <div class="page-title">付款节点</div>
+        ${renderContractPaymentTable(paymentNodes)}
+      </div>
+    `;
+  }
+  if (moduleId === "contract") {
+    const presign = state.preSignContracts.find((p) => p.id === record.presign_contract_id);
+    const links = presign ? state.preSignLinks.filter((l) => l.presign_contract_id === presign.id) : [];
+    const paymentNodes = state.contractPaymentNodes.filter((n) => n.contract_id === record.id);
+    const invoices = state.invoices.filter((inv) => inv.contract_id === record.id);
+    return `
+      <div class="panel">
+        <div class="page-title">合同关键信息</div>
+        <div class="form-grid">
+          <div><div class="subtle">客户</div><div>${getCustomer(record.customer_id)?.short_name || ""}</div></div>
+          <div><div class="subtle">客户合同号</div><div>${record.customer_contract_no || ""}</div></div>
+          <div><div class="subtle">合同标题</div><div>${record.contract_title || ""}</div></div>
+          <div><div class="subtle">产品类型</div><div>${getProduct(record.product_type_id)?.name || ""}</div></div>
+          <div><div class="subtle">含税金额</div><div>${record.total_amount_incl_tax || ""}</div></div>
+          <div><div class="subtle">IP 归属</div><div>${record.ip_ownership || ""}</div></div>
+        </div>
+        <div class="page-title">映射项目</div>
+        ${renderLinkSummaryTable(links)}
+        <div class="page-title">付款节点</div>
+        ${renderContractPaymentTable(paymentNodes)}
+        <div class="page-title">关联回款</div>
+        ${renderInvoiceSummary(invoices)}
+      </div>
+      <div class="panel">
+        <div class="page-title">合同文件快照</div>
+        <div class="tabs">
+          <button class="active" data-tab="presign-file">代签文件快照</button>
+          <button data-tab="signed-file">归档合同快照</button>
+        </div>
+        <div id="filePreviewPanel">${renderFilePreview(presign?.source_file_url || "#", presign?.source_file_type || "pdf")}</div>
+      </div>
+    `;
+  }
+  return "";
+}
+
+function renderFilePreview(url, type) {
+  if (type === "word") {
+    return `<div class="subtle">word 预览 mock（${url}）</div>`;
+  }
+  return `
+    <object data="${url}" type="application/pdf" width="100%" height="360">
+      <iframe src="${url}" width="100%" height="360" title="PDF Preview"></iframe>
+      <a href="${url}">下载查看</a>
+    </object>
+  `;
+}
+
+function renderLinkSummaryTable(links) {
+  if (!links.length) return "<div class='subtle'>暂无映射</div>";
+  return `
+    <table class="table">
+      <thead><tr><th>类型</th><th>PID/PMS</th><th>配置</th><th>备注</th></tr></thead>
+      <tbody>
+        ${links
+          .map(
+            (link) => `
+          <tr>
+            <td>${link.link_type}</td>
+            <td>${link.link_type === "pms" ? link.pms_id : link.pid}</td>
+            <td>${link.configuration_id ? getConfiguration(link.configuration_id)?.name : ""}</td>
+            <td>${link.comment || ""}</td>
+          </tr>
+        `
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderContractPaymentTable(nodes) {
+  if (!nodes.length) return "<div class='subtle'>暂无付款节点</div>";
+  return `
+    <table class="table">
+      <thead><tr><th>序号</th><th>节点</th><th>比例%</th><th>金额</th><th>计划年度</th></tr></thead>
+      <tbody>
+        ${nodes
+          .map(
+            (node) => `
+          <tr>
+            <td>${node.seq_no}</td>
+            <td>${node.node_name}</td>
+            <td>${node.pay_ratio ?? ""}</td>
+            <td>${node.pay_amount ?? ""}</td>
+            <td>${node.planned_year ?? ""}</td>
+          </tr>
+        `
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderInvoiceSummary(invoices) {
+  if (!invoices.length) return "<div class='subtle'>暂无回款</div>";
+  const total = invoices.reduce((sum, inv) => sum + Number(inv.received_amount || 0), 0);
+  return `
+    <div class="stat-card">回款合计：${total} 万</div>
+    <table class="table">
+      <thead><tr><th>日期</th><th>金额</th><th>参考号</th></tr></thead>
+      <tbody>
+        ${invoices
+          .map(
+            (inv) => `
+          <tr>
+            <td>${inv.received_date}</td>
+            <td>${inv.received_amount}</td>
+            <td>${inv.payment_reference_no}</td>
+          </tr>
+        `
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
 function renderForm(moduleId, id = null) {
   const module = modules[moduleId];
   const content = document.getElementById("content");
@@ -820,9 +1043,8 @@ function renderForm(moduleId, id = null) {
   if (moduleId === "presign") {
     return renderPreSignForm(record);
   }
-  if (moduleId === "contract" && !record) {
-    location.hash = "#/contracts/wizard";
-    return;
+  if (moduleId === "contract") {
+    return renderContractForm(record);
   }
   if (moduleId === "pms") {
     return renderPmsForm(record);
@@ -865,10 +1087,27 @@ function renderPreSignForm(record) {
   const content = document.getElementById("content");
   const isEdit = Boolean(record);
   const links = record ? state.preSignLinks.filter((l) => l.presign_contract_id === record.id) : [];
+  const paymentNodes = record ? state.preSignPaymentNodes.filter((n) => n.pre_sign_contract_id === record.id) : [];
   content.innerHTML = `
     <div class="panel">
       <div class="page-title">代签合同/协议 / ${isEdit ? "编辑" : "新建"}</div>
+      <div class="panel">
+        <div class="page-title">步骤 1：上传代签文件</div>
+        <div class="form-grid">
+          <label><div class="subtle">文件类型</div><input id="sourceFileType" value="${record?.source_file_type || "pdf"}" /></label>
+          <label><div class="subtle">文件路径</div><input id="sourceFileUrl" value="${record?.source_file_url || "#"}" /></label>
+          <button type="button" id="uploadPresignFile">上传</button>
+        </div>
+        <div class="form-actions">
+          <button type="button" id="runPresignOcr">OCR自动识别提取字段</button>
+          <button type="button" id="clearPresignOcr">清除已提取内容</button>
+        </div>
+        <div id="ocrToast" class="subtle"></div>
+        <div id="ocrPreview" class="panel hidden"></div>
+      </div>
       <form id="presignForm">
+        <input type="hidden" name="source_file_type" value="${record?.source_file_type || "pdf"}" />
+        <input type="hidden" name="source_file_url" value="${record?.source_file_url || "#"}" />
         <div class="form-grid">
           ${renderSelect("customer_id", "客户", state.master.customers, record?.customer_id)}
           ${renderSelect("product_type_id", "产品类型", state.master.productTypes, record?.product_type_id)}
@@ -880,18 +1119,26 @@ function renderPreSignForm(record) {
           <label><div class="subtle">开发原因</div><input name="development_reason" value="${record?.development_reason || ""}" /></label>
           <label><div class="subtle">不含税金额</div><input name="total_amount_excl_tax" type="number" value="${record?.total_amount_excl_tax || ""}" /></label>
           <label><div class="subtle">含税金额</div><input name="total_amount_incl_tax" type="number" value="${record?.total_amount_incl_tax || ""}" /></label>
-          <label><div class="subtle">付款条款</div><textarea name="payment_terms_text">${record?.payment_terms_text || ""}</textarea></label>
+          <label><div class="subtle">付款条款摘要</div><textarea name="payment_terms_text">${record?.payment_terms_text || ""}</textarea></label>
           ${renderSelect("ip_ownership", "IP 归属", enums.ipOwnership, record?.ip_ownership, true)}
           <label><div class="subtle">IP 备注</div><input name="ip_notes" value="${record?.ip_notes || ""}" /></label>
-          <label><div class="subtle">文件类型</div><input name="source_file_type" value="${record?.source_file_type || "pdf"}" /></label>
-          ${renderSelect("ocr_status", "OCR 状态", enums.ocrStatus, record?.ocr_status, true)}
           ${renderSelect("project_nominal_type", "名义类型", enums.presignNominal, record?.project_nominal_type, true)}
           ${renderSelect("status", "状态", enums.presignStatus, record?.status, true)}
         </div>
         <div class="panel">
           <div class="page-title">项目映射</div>
+          <div class="form-actions">
+            <button type="button" id="openPmsPicker">关联PMS项目</button>
+            <button type="button" id="openSalesforcePicker">关联Salesforce项目</button>
+          </div>
           <div id="linkRows"></div>
           <button type="button" id="addLink">+ 添加映射</button>
+        </div>
+        <div class="panel">
+          <div class="page-title">付款节点</div>
+          <div id="paymentNodeRows"></div>
+          <button type="button" id="addPaymentNode">+ 添加节点</button>
+          <div class="subtle" id="paymentWarning"></div>
         </div>
       </form>
       <div class="form-actions">
@@ -903,6 +1150,14 @@ function renderPreSignForm(record) {
   `;
 
   const linkRows = content.querySelector("#linkRows");
+  const paymentNodeRows = content.querySelector("#paymentNodeRows");
+  let currentPayments = paymentNodes.length
+    ? paymentNodes.map((n) => ({ ...n }))
+    : [
+        { seq_no: 1, node_name: "OTS", pay_ratio: 30, pay_amount: "" },
+        { seq_no: 2, node_name: "PPAP", pay_ratio: 50, pay_amount: "" },
+        { seq_no: 3, node_name: "SOP", pay_ratio: 20, pay_amount: "" },
+      ];
   const renderLinks = (currentLinks) => {
     linkRows.innerHTML = currentLinks
       .map(
@@ -925,6 +1180,88 @@ function renderPreSignForm(record) {
     renderLinks(currentLinks);
   });
 
+  const renderPaymentNodes = () => {
+    paymentNodeRows.innerHTML = currentPayments
+      .map(
+        (node, idx) => `
+        <div class="form-grid" data-node-index="${idx}">
+          <label><div class="subtle">序号</div><input name="seq_no" value="${node.seq_no || idx + 1}" /></label>
+          <label><div class="subtle">节点名称</div><input name="node_name" value="${node.node_name || ""}" /></label>
+          <label><div class="subtle">比例%</div><input name="pay_ratio" value="${node.pay_ratio ?? ""}" /></label>
+          <label><div class="subtle">金额</div><input name="pay_amount" value="${node.pay_amount ?? ""}" /></label>
+        </div>
+      `
+      )
+      .join("");
+    bindPaymentNodeCalculation(paymentNodeRows);
+  };
+  renderPaymentNodes();
+
+  content.querySelector("#addPaymentNode").addEventListener("click", () => {
+    currentPayments.push({ seq_no: currentPayments.length + 1 });
+    renderPaymentNodes();
+  });
+
+  content.querySelector("#openPmsPicker").addEventListener("click", () => {
+    openLinkPicker("pms", (selected) => {
+      selected.forEach((item) => {
+        currentLinks.push({
+          link_type: "pms",
+          pms_id: item.pms_id,
+          pms_project_id: item.id,
+          comment: "选择关联",
+        });
+      });
+      renderLinks(currentLinks);
+    });
+  });
+  content.querySelector("#openSalesforcePicker").addEventListener("click", () => {
+    openLinkPicker("salesforce", (selected) => {
+      selected.forEach((item) => {
+        currentLinks.push({
+          link_type: "salesforce",
+          pid: item.pid,
+          configuration_id: item.configuration_id,
+          snapshot_ref_id: item.id,
+          comment: "选择关联",
+        });
+      });
+      renderLinks(currentLinks);
+    });
+  });
+
+  content.querySelector("#uploadPresignFile").addEventListener("click", () => {
+    const url = content.querySelector("#sourceFileUrl").value || "#";
+    content.querySelector("input[name='source_file_url']").value = url;
+    content.querySelector("input[name='source_file_type']").value = content.querySelector("#sourceFileType").value || "pdf";
+    if (record) record.source_file_url = url;
+  });
+  content.querySelector("#runPresignOcr").addEventListener("click", () => {
+    const form = content.querySelector("#presignForm");
+    form.querySelector("input[name='customer_contract_no']").value = "OCR-CT-9001";
+    form.querySelector("input[name='contract_title']").value = "OCR 识别合同";
+    form.querySelector("input[name='customer_vehicle_project_name']").value = "OCR 项目";
+    form.querySelector("textarea[name='payment_terms_text']").value = "OCR: 40%预付，60%验收";
+    form.querySelector("input[name='total_amount_incl_tax']").value = "200";
+    form.querySelector("select[name='ip_ownership']").value = "customer";
+    content.querySelector("#ocrToast").textContent = "OCR提取成功（模拟）";
+    const preview = content.querySelector("#ocrPreview");
+    preview.classList.remove("hidden");
+    preview.innerHTML = `
+      <div class="page-title">OCR提取结果预览</div>
+      <div class="subtle">合同号: OCR-CT-9001 (95%)</div>
+      <div class="subtle">合同标题: OCR 识别合同 (92%)</div>
+      <div class="subtle">车型项目: OCR 项目 (88%)</div>
+      <div class="subtle">含税金额: 200 (90%)</div>
+    `;
+  });
+  content.querySelector("#clearPresignOcr").addEventListener("click", () => {
+    const preview = content.querySelector("#ocrPreview");
+    preview.classList.add("hidden");
+    preview.innerHTML = "";
+    content.querySelector("#ocrToast").textContent = "已清除OCR提取内容";
+  });
+
   content.querySelector("#savePresign").addEventListener("click", () => {
     const form = content.querySelector("#presignForm");
     const formData = new FormData(form);
@@ -942,6 +1279,14 @@ function renderPreSignForm(record) {
         comment: row.querySelector("input[name='comment']")?.value || "",
       };
     });
+    const parsedPayments = Array.from(paymentNodeRows.querySelectorAll("[data-node-index]")).map((row, idx) => {
+      return {
+        seq_no: Number(row.querySelector("input[name='seq_no']")?.value || idx + 1),
+        node_name: row.querySelector("input[name='node_name']")?.value || "",
+        pay_ratio: Number(row.querySelector("input[name='pay_ratio']")?.value || 0),
+        pay_amount: Number(row.querySelector("input[name='pay_amount']")?.value || 0),
+      };
+    });
 
     const hasPms = parsedLinks.some((l) => l.link_type === "pms" && l.pms_id);
     const needSalesforce = ["new_acquisition", "mixed"].includes(payload.project_nominal_type);
@@ -953,6 +1298,10 @@ function renderPreSignForm(record) {
     }
     if (needSalesforce && !hasSalesforce) {
       content.querySelector("#validationHint").textContent = "校验失败：名义类型为新开发/混合时必须映射 Salesforce 项目。";
+      return;
+    }
+    if (!parsedPayments.length) {
+      content.querySelector("#validationHint").textContent = "校验失败：至少需要 1 条付款节点。";
       return;
     }
 
@@ -967,6 +1316,17 @@ function renderPreSignForm(record) {
           presign_contract_id: record.id,
         });
       });
+      state.preSignPaymentNodes = state.preSignPaymentNodes.filter((n) => n.pre_sign_contract_id !== record.id);
+      parsedPayments.forEach((node, idx) => {
+        state.preSignPaymentNodes.push({
+          id: state.preSignPaymentNodes.length + 1,
+          pre_sign_contract_id: record.id,
+          seq_no: node.seq_no || idx + 1,
+          node_name: node.node_name,
+          pay_ratio: node.pay_ratio,
+          pay_amount: node.pay_amount,
+        });
+      });
     } else {
       const newId = state.preSignContracts.length + 1;
       state.preSignContracts.push({ id: newId, ...payload, is_deleted: false });
@@ -977,9 +1337,190 @@ function renderPreSignForm(record) {
           presign_contract_id: newId,
         });
       });
+      parsedPayments.forEach((node, idx) => {
+        state.preSignPaymentNodes.push({
+          id: state.preSignPaymentNodes.length + 1,
+          pre_sign_contract_id: newId,
+          seq_no: node.seq_no || idx + 1,
+          node_name: node.node_name,
+          pay_ratio: node.pay_ratio,
+          pay_amount: node.pay_amount,
+        });
+      });
       addAuditLog("presign", newId, "create");
     }
     location.hash = "#/module/presign";
+  });
+}
+
+function renderContractForm(record) {
+  const content = document.getElementById("content");
+  const isEdit = Boolean(record);
+  const presign = record ? state.preSignContracts.find((p) => p.id === record.presign_contract_id) : null;
+  const paymentNodes = record
+    ? state.contractPaymentNodes.filter((n) => n.contract_id === record.id)
+    : [];
+  const preSignNodes = presign ? state.preSignPaymentNodes.filter((n) => n.pre_sign_contract_id === presign.id) : [];
+  const currentNodes = paymentNodes.length
+    ? paymentNodes.map((n) => ({ ...n }))
+    : preSignNodes.map((n) => ({ ...n, planned_year: new Date().getFullYear() }));
+
+  content.innerHTML = `
+    <div class="panel">
+      <div class="page-title">合同管理 / ${isEdit ? "编辑" : "新建"}</div>
+      <form id="contractForm">
+        <div class="panel">
+          <div class="page-title">步骤 1：选择代签合同</div>
+          <div class="form-actions">
+            <button type="button" id="openPresignPicker">搜索选择</button>
+          </div>
+          <div id="selectedPresign" class="subtle">${presign ? `${presign.customer_contract_no} - ${presign.contract_title}` : "未选择"}</div>
+          <input type="hidden" name="presign_contract_id" value="${record?.presign_contract_id || ""}" />
+        </div>
+        <div class="panel">
+          <div class="page-title">步骤 2：上传签署文件</div>
+          <div class="form-grid">
+            <label><div class="subtle">文件名称</div><input name="signed_file_name" value="${record?.signed_file_name || ""}" /></label>
+            <label><div class="subtle">文件路径</div><input name="signed_file_url" value="${record?.signed_file_url || "#"}" /></label>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="page-title">步骤 3：OCR自动识别用于校验</div>
+          <button type="button" id="contractOcrCheck">OCR自动识别用于校验</button>
+          <div id="contractOcrResult" class="subtle"></div>
+        </div>
+        <div class="panel">
+          <div class="page-title">步骤 4：合同付款节点</div>
+          <div id="contractPaymentRows"></div>
+          <button type="button" id="addContractNode">+ 添加节点</button>
+        </div>
+      </form>
+      <div class="form-actions">
+        <button type="button" onclick="location.hash='#/module/contract'">取消</button>
+        <button class="primary" id="saveContract">保存</button>
+      </div>
+    </div>
+  `;
+
+  const paymentRows = content.querySelector("#contractPaymentRows");
+  let workingNodes = currentNodes.length
+    ? currentNodes.map((n, idx) => ({ ...n, seq_no: n.seq_no || idx + 1 }))
+    : [
+        { seq_no: 1, node_name: "OTS", pay_ratio: 30, pay_amount: 0, planned_year: new Date().getFullYear() },
+      ];
+  const renderContractNodes = () => {
+    paymentRows.innerHTML = workingNodes
+      .map(
+        (node, idx) => `
+      <div class="form-grid" data-contract-node="${idx}">
+        <label><div class="subtle">序号</div><input name="seq_no" value="${node.seq_no || idx + 1}" /></label>
+        <label><div class="subtle">节点名称</div><input name="node_name" value="${node.node_name || ""}" /></label>
+        <label><div class="subtle">比例%</div><input name="pay_ratio" value="${node.pay_ratio ?? ""}" /></label>
+        <label><div class="subtle">金额</div><input name="pay_amount" value="${node.pay_amount ?? ""}" /></label>
+        <label><div class="subtle">计划年度</div><input name="planned_year" value="${node.planned_year || ""}" /></label>
+      </div>
+    `
+      )
+      .join("");
+  };
+  renderContractNodes();
+
+  content.querySelector("#addContractNode").addEventListener("click", () => {
+    workingNodes.push({ seq_no: workingNodes.length + 1, planned_year: new Date().getFullYear() });
+    renderContractNodes();
+  });
+
+  content.querySelector("#openPresignPicker").addEventListener("click", () => {
+    openPresignPicker((selected) => {
+      const chosen = selected[0];
+      if (!chosen) return;
+      const hidden = content.querySelector("input[name='presign_contract_id']");
+      hidden.value = chosen.id;
+      content.querySelector("#selectedPresign").textContent = `${chosen.customer_contract_no} - ${chosen.contract_title}`;
+      workingNodes = state.preSignPaymentNodes
+        .filter((n) => n.pre_sign_contract_id === chosen.id)
+        .map((n, idx) => ({
+          seq_no: n.seq_no || idx + 1,
+          node_name: n.node_name,
+          pay_ratio: n.pay_ratio,
+          pay_amount: n.pay_amount,
+          planned_year: new Date().getFullYear(),
+        }));
+      renderContractNodes();
+    });
+  });
+
+  content.querySelector("#contractOcrCheck").addEventListener("click", () => {
+    content.querySelector("#contractOcrResult").textContent = "校验完成：合同号一致，金额一致，IP 条款需确认（模拟）。";
+  });
+
+  content.querySelector("#saveContract").addEventListener("click", () => {
+    const form = content.querySelector("#contractForm");
+    const formData = new FormData(form);
+    const payload = normalizePayload(Object.fromEntries(formData.entries()));
+    if (!payload.presign_contract_id) {
+      alert("请选择代签合同");
+      return;
+    }
+    const selectedPresign = state.preSignContracts.find((p) => p.id === Number(payload.presign_contract_id));
+    if (!selectedPresign) return;
+    const parsedNodes = Array.from(paymentRows.querySelectorAll("[data-contract-node]")).map((row, idx) => ({
+      seq_no: Number(row.querySelector("input[name='seq_no']")?.value || idx + 1),
+      node_name: row.querySelector("input[name='node_name']")?.value || "",
+      pay_ratio: Number(row.querySelector("input[name='pay_ratio']")?.value || 0),
+      pay_amount: Number(row.querySelector("input[name='pay_amount']")?.value || 0),
+      planned_year: Number(row.querySelector("input[name='planned_year']")?.value || new Date().getFullYear()),
+    }));
+    if (isEdit) {
+      Object.assign(record, payload);
+      addAuditLog("contract", record.id, "update");
+      state.contractPaymentNodes = state.contractPaymentNodes.filter((n) => n.contract_id !== record.id);
+      parsedNodes.forEach((node) => {
+        state.contractPaymentNodes.push({
+          id: state.contractPaymentNodes.length + 1,
+          contract_id: record.id,
+          ...node,
+        });
+      });
+      location.hash = "#/module/contract";
+      return;
+    }
+    const newId = state.contracts.length + 1;
+    const internalId = `CT-${new Date().getFullYear()}-${String(newId).padStart(5, "0")}`;
+    state.contracts.push({
+      id: newId,
+      internal_contract_id: internalId,
+      presign_contract_id: Number(payload.presign_contract_id),
+      customer_id: selectedPresign.customer_id,
+      product_type_id: selectedPresign.product_type_id,
+      sales_region_id: selectedPresign.sales_region_id,
+      customer_contract_no: selectedPresign.customer_contract_no,
+      contract_title: selectedPresign.contract_title,
+      signed_file_name: payload.signed_file_name,
+      signed_file_url: payload.signed_file_url,
+      signed_date: new Date().toISOString().split("T")[0],
+      archive_date: new Date().toISOString().split("T")[0],
+      total_amount_excl_tax: selectedPresign.total_amount_excl_tax,
+      total_amount_incl_tax: selectedPresign.total_amount_incl_tax,
+      payment_terms_text: selectedPresign.payment_terms_text,
+      ip_ownership: selectedPresign.ip_ownership,
+      ip_notes: selectedPresign.ip_notes,
+      derived_payment_years_text: "2025, 2026",
+      derivation_status: "ok",
+      status: "active",
+      is_deleted: false,
+      created_at: new Date().toLocaleString(),
+      updated_at: new Date().toLocaleString(),
+    });
+    parsedNodes.forEach((node) => {
+      state.contractPaymentNodes.push({
+        id: state.contractPaymentNodes.length + 1,
+        contract_id: newId,
+        ...node,
+      });
+    });
+    addAuditLog("contract", newId, "create");
+    location.hash = "#/module/contract";
   });
 }
 
@@ -993,6 +1534,7 @@ function renderPmsForm(record) {
       <form id="pmsForm">
         <div class="form-grid">
           <label><div class="subtle">PMS ID</div><input name="pms_id" value="${record?.pms_id || ""}" /></label>
+          <label><div class="subtle">PID</div><input name="pid" value="${record?.pid || ""}" /></label>
           <label><div class="subtle">项目名称</div><input name="project_name" value="${record?.project_name || ""}" /></label>
           ${renderSelect("customer_id", "客户", state.master.customers, record?.customer_id)}
           ${renderSelect("product_type_id", "产品类型", state.master.productTypes, record?.product_type_id)}
@@ -1002,6 +1544,8 @@ function renderPmsForm(record) {
           <label><div class="subtle">MCRL0</div><input name="mcrl0" value="${record?.mcrl0 || ""}" /></label>
           <label><div class="subtle">MCRL1</div><input name="mcrl1" value="${record?.mcrl1 || ""}" /></label>
           <label><div class="subtle">MCRL2</div><input name="mcrl2" value="${record?.mcrl2 || ""}" /></label>
+          <label><div class="subtle">创建时间</div><input name="created_at" value="${record?.created_at || ""}" /></label>
+          <label><div class="subtle">创建人</div><input name="created_by" value="${record?.created_by || ""}" /></label>
         </div>
       </form>
       <div class="panel">
@@ -1070,6 +1614,196 @@ function renderPmsForm(record) {
       addAuditLog("pms", newId, "create");
     }
     location.hash = "#/module/pms";
+  });
+}
+
+function bindPaymentNodeCalculation(container) {
+  const totalAmountInput = document.querySelector("input[name='total_amount_incl_tax']");
+  const warning = document.getElementById("paymentWarning");
+  const recalc = () => {
+    const total = Number(totalAmountInput?.value || 0);
+    let ratioSum = 0;
+    container.querySelectorAll("[data-node-index]").forEach((row) => {
+      const ratioInput = row.querySelector("input[name='pay_ratio']");
+      const amountInput = row.querySelector("input[name='pay_amount']");
+      const ratio = Number(ratioInput?.value || 0);
+      const amount = Number(amountInput?.value || 0);
+      if (ratio && total) {
+        amountInput.value = ((ratio / 100) * total).toFixed(2);
+      } else if (amount && total) {
+        ratioInput.value = ((amount / total) * 100).toFixed(2);
+      }
+      ratioSum += Number(ratioInput?.value || 0);
+    });
+    if (warning) {
+      warning.textContent = ratioSum && ratioSum !== 100 ? `提示：比例合计 ${ratioSum.toFixed(2)}%` : "";
+    }
+  };
+  container.querySelectorAll("input[name='pay_ratio'], input[name='pay_amount']").forEach((input) => {
+    input.addEventListener("input", recalc);
+  });
+  totalAmountInput?.addEventListener("input", recalc);
+  recalc();
+}
+
+function openLinkPicker(type, onConfirm) {
+  const modal = document.getElementById("modal");
+  const sourceData = type === "pms" ? state.pmsProjects : state.snapshots;
+  modal.innerHTML = `
+    <div class="panel">
+      <div class="page-title">选择${type === "pms" ? "PMS项目" : "Salesforce项目"}</div>
+      <div class="filters">
+        <input placeholder="客户" data-filter="customer_id" />
+        <input placeholder="产品类型" data-filter="product_type_id" />
+        <input placeholder="销售区域" data-filter="sales_region_id" />
+        ${type === "pms" ? `<input placeholder="项目名" data-filter="project_name" />
+        <input placeholder="PMS ID" data-filter="pms_id" />
+        <input placeholder="PID" data-filter="pid" />
+        <input placeholder="MCRL0" data-filter="mcrl0" />
+        <input placeholder="MCRL1" data-filter="mcrl1" />
+        <input placeholder="MCRL2" data-filter="mcrl2" />` : `<input placeholder="PID" data-filter="pid" />
+        <input placeholder="配置" data-filter="configuration_id" />
+        <input placeholder="SE状态" data-filter="se_status" />`}
+      </div>
+      <div id="pickerTable"></div>
+      <div class="form-actions">
+        <button id="closeModal">取消</button>
+        <button class="primary" id="confirmPicker">添加所选</button>
+      </div>
+    </div>
+  `;
+  modal.classList.remove("hidden");
+  const renderTable = () => {
+    const filters = {};
+    modal.querySelectorAll("[data-filter]").forEach((input) => {
+      if (input.value) filters[input.dataset.filter] = input.value;
+    });
+    const filtered = sourceData.filter((row) => {
+      return Object.entries(filters).every(([key, value]) => matchesFilter(row, key, value));
+    });
+    modal.querySelector("#pickerTable").innerHTML = `
+      <table class="table">
+        <thead>
+          <tr>
+            <th></th>
+            ${type === "pms" ? "<th>PMS ID</th><th>PID</th><th>项目名</th><th>客户</th>" : "<th>PID</th><th>配置</th><th>客户</th><th>SE</th>"}
+          </tr>
+        </thead>
+        <tbody>
+          ${filtered
+            .map((row) => {
+              return `
+              <tr>
+                <td><input type="checkbox" class="picker-select" data-id="${row.id}" /></td>
+                ${type === "pms"
+                  ? `<td>${row.pms_id}</td><td>${row.pid || ""}</td><td>${row.project_name}</td><td>${getCustomer(row.customer_id)?.short_name || ""}</td>`
+                  : `<td>${row.pid}</td><td>${getConfiguration(row.configuration_id)?.name || ""}</td><td>${getCustomer(row.customer_id)?.short_name || ""}</td><td>${row.se_status}</td>`}
+              </tr>
+            `;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    `;
+  };
+  renderTable();
+  modal.querySelectorAll("[data-filter]").forEach((input) => {
+    input.addEventListener("input", renderTable);
+  });
+  modal.querySelector("#closeModal").addEventListener("click", () => closeModal());
+  modal.querySelector("#confirmPicker").addEventListener("click", () => {
+    const ids = Array.from(modal.querySelectorAll(".picker-select:checked")).map((cb) => Number(cb.dataset.id));
+    const selected = sourceData.filter((row) => ids.includes(row.id));
+    onConfirm(selected);
+    closeModal();
+  });
+}
+
+function closeModal() {
+  const modal = document.getElementById("modal");
+  modal.classList.add("hidden");
+  modal.innerHTML = "";
+}
+
+function matchesFilter(row, key, value) {
+  if (key === "customer_id") {
+    const customer = getCustomer(row.customer_id);
+    return customer && (customer.short_name.includes(value) || customer.legal_name.includes(value) || String(row.customer_id).includes(value));
+  }
+  if (key === "product_type_id") {
+    const product = getProduct(row.product_type_id);
+    return product && (product.name.includes(value) || String(row.product_type_id).includes(value));
+  }
+  if (key === "sales_region_id") {
+    const region = getRegion(row.sales_region_id);
+    return region && (region.name.includes(value) || String(row.sales_region_id).includes(value));
+  }
+  if (key === "configuration_id") {
+    const config = getConfiguration(row.configuration_id);
+    return config && (config.name.includes(value) || String(row.configuration_id).includes(value));
+  }
+  return String(row[key] || "").includes(value);
+}
+
+function openPresignPicker(onConfirm) {
+  const modal = document.getElementById("modal");
+  modal.innerHTML = `
+    <div class="panel">
+      <div class="page-title">选择代签合同</div>
+      <div class="filters">
+        <input placeholder="客户" data-filter="customer_id" />
+        <input placeholder="合同标题" data-filter="contract_title" />
+        <input placeholder="合同号" data-filter="customer_contract_no" />
+        <input placeholder="产品类型" data-filter="product_type_id" />
+        <input placeholder="车型项目" data-filter="customer_vehicle_project_name" />
+        <input placeholder="状态" data-filter="status" />
+      </div>
+      <div id="presignPickerTable"></div>
+      <div class="form-actions">
+        <button id="closeModal">取消</button>
+        <button class="primary" id="confirmPicker">添加所选</button>
+      </div>
+    </div>
+  `;
+  modal.classList.remove("hidden");
+  const renderTable = () => {
+    const filters = {};
+    modal.querySelectorAll("[data-filter]").forEach((input) => {
+      if (input.value) filters[input.dataset.filter] = input.value;
+    });
+    const filtered = state.preSignContracts.filter((row) => {
+      return Object.entries(filters).every(([key, value]) => matchesFilter(row, key, value));
+    });
+    modal.querySelector("#presignPickerTable").innerHTML = `
+      <table class="table">
+        <thead><tr><th></th><th>合同号</th><th>合同标题</th><th>客户</th><th>状态</th></tr></thead>
+        <tbody>
+          ${filtered
+            .map(
+              (row) => `
+            <tr>
+              <td><input type="radio" name="presignPick" class="picker-select" data-id="${row.id}" /></td>
+              <td>${row.customer_contract_no}</td>
+              <td>${row.contract_title}</td>
+              <td>${getCustomer(row.customer_id)?.short_name || ""}</td>
+              <td>${row.status}</td>
+            </tr>
+          `
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `;
+  };
+  renderTable();
+  modal.querySelectorAll("[data-filter]").forEach((input) => input.addEventListener("input", renderTable));
+  modal.querySelector("#closeModal").addEventListener("click", () => closeModal());
+  modal.querySelector("#confirmPicker").addEventListener("click", () => {
+    const selectedId = modal.querySelector(".picker-select:checked")?.dataset.id;
+    if (!selectedId) return;
+    const selected = state.preSignContracts.filter((row) => row.id === Number(selectedId));
+    onConfirm(selected);
+    closeModal();
   });
 }
 
@@ -1506,17 +2240,19 @@ function runSync(type) {
       state.pmsProjects.push({
         id: startId + i,
         pms_id: `PMS-${2500 + i}`,
+        pid: String(555000 + i),
         project_name: `新增项目 ${i + 1}`,
         customer_id: customer.id,
         product_type_id: state.master.productTypes[i % state.master.productTypes.length].id,
         sales_region_id: customer.sales_region_id,
         project_complexity: enums.projectComplexity[i % enums.projectComplexity.length],
         project_phase: enums.projectPhase[i % enums.projectPhase.length],
-        mcrl0: "M0",
-        mcrl1: "M1",
-        mcrl2: "M2",
+        mcrl0: "BM-00095001",
+        mcrl1: "BM-00095001_001",
+        mcrl2: "BM-00095001_002",
         source_batch_id: 2,
         created_at: now,
+        created_by: getUser().username,
         updated_at: now,
         is_deleted: false,
       });
@@ -1644,33 +2380,23 @@ function renderDashboard() {
   const currentYear = new Date().getFullYear();
   const years = [currentYear - 1, currentYear, currentYear + 1, currentYear + 2, currentYear + 3];
   const viewType = state.ui.dashboardView || "internal";
+  const grouping = state.ui.dashboardGrouping || "stage";
 
-  const totals = computeDashboardTotals(viewType, years);
   content.innerHTML = `
     <div class="panel">
       <div class="page-title">OTP 总览看板</div>
       <div class="form-actions">
         <button class="${viewType === "internal" ? "primary" : ""}" id="internalView">内部视图</button>
         <button class="${viewType === "global" ? "primary" : ""}" id="globalView">全局视图</button>
+        <select id="groupingMode">
+          <option value="stage" ${grouping === "stage" ? "selected" : ""}>仅按阶段</option>
+          <option value="stageCustomer" ${grouping === "stageCustomer" ? "selected" : ""}>阶段 -> 客户</option>
+          <option value="customerStage" ${grouping === "customerStage" ? "selected" : ""}>客户 -> 阶段</option>
+        </select>
       </div>
     </div>
     <div class="panel">
-      <table class="table matrix-table">
-        <thead><tr><th>阶段</th>${years.map((y) => `<th>${y}</th>`).join("")}</tr></thead>
-        <tbody>
-          ${["SE3", "SE4", "Contract", "Invoice"].map((stage) => {
-            return `<tr>
-              <td>${stage}</td>
-              ${years
-                .map((year) => {
-                  const value = totals[stage][year] || 0;
-                  return `<td><button data-stage="${stage}" data-year="${year}">${value.toFixed(1)}</button></td>`;
-                })
-                .join("")}
-            </tr>`;
-          })}
-        </tbody>
-      </table>
+      ${renderDashboardMatrix(viewType, grouping, years)}
     </div>
     <div class="grid-2">
       <div class="panel">
@@ -1693,12 +2419,99 @@ function renderDashboard() {
     state.ui.dashboardView = "global";
     renderDashboard();
   });
+  content.querySelector("#groupingMode").addEventListener("change", (e) => {
+    state.ui.dashboardGrouping = e.target.value;
+    renderDashboard();
+  });
 
   content.querySelectorAll("button[data-stage]").forEach((btn) => {
     btn.addEventListener("click", () => {
       openDrilldown(btn.dataset.stage, Number(btn.dataset.year));
     });
   });
+}
+
+function renderDashboardMatrix(viewType, grouping, years) {
+  if (grouping === "stage") {
+    const totals = computeDashboardTotals(viewType, years);
+    return `
+      <table class="table matrix-table">
+        <thead><tr><th>阶段</th>${years.map((y) => `<th>${y}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${["SE3", "SE4", "Contract", "Invoice"].map((stage) => {
+            return `<tr>
+              <td>${stage}</td>
+              ${years
+                .map((year) => {
+                  const value = totals[stage][year] || 0;
+                  return `<td><button data-stage="${stage}" data-year="${year}">${value.toFixed(1)}</button></td>`;
+                })
+                .join("")}
+            </tr>`;
+          })}
+        </tbody>
+      </table>
+    `;
+  }
+  const customers = state.master.customers;
+  const stages = ["SE3", "SE4", "Contract", "Invoice"];
+  const rows = [];
+  if (grouping === "stageCustomer") {
+    stages.forEach((stage) => {
+      rows.push({ label: stage, stage, customer_id: null, level: 0 });
+      customers.forEach((customer) => {
+        rows.push({ label: `— ${customer.short_name}`, stage, customer_id: customer.id, level: 1 });
+      });
+    });
+  } else {
+    customers.forEach((customer) => {
+      rows.push({ label: customer.short_name, stage: null, customer_id: customer.id, level: 0 });
+      stages.forEach((stage) => {
+        rows.push({ label: `— ${stage}`, stage, customer_id: customer.id, level: 1 });
+      });
+    });
+  }
+  return `
+    <table class="table matrix-table">
+      <thead><tr><th>维度</th>${years.map((y) => `<th>${y}</th>`).join("")}</tr></thead>
+      <tbody>
+        ${rows
+          .map((row) => {
+            return `<tr>
+              <td>${row.label}</td>
+              ${years
+                .map((year) => {
+                  const value = getDashboardValue(viewType, row.stage, row.customer_id, year);
+                  if (!row.stage) {
+                    return `<td>${value.toFixed(1)}</td>`;
+                  }
+                  return `<td><button data-stage="${row.stage}" data-year="${year}">${value.toFixed(1)}</button></td>`;
+                })
+                .join("")}
+            </tr>`;
+          })
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function getDashboardValue(viewType, stage, customerId, year) {
+  if (!stage) {
+    const stageTotals = ["SE3", "SE4", "Contract", "Invoice"].reduce((sum, stg) => sum + getDashboardValue(viewType, stg, customerId, year), 0);
+    return stageTotals;
+  }
+  if (stage === "SE3" || stage === "SE4") {
+    return state.snapshots
+      .filter((s) => s.se_status === stage && (!customerId || s.customer_id === customerId) && s.otp_amounts_text.includes(String(year)))
+      .length;
+  }
+  if (stage === "Contract") {
+    return filterContractsByView(viewType).filter((c) => (!customerId || c.customer_id === customerId) && c.derived_payment_years_text?.includes(String(year))).length * 1.5;
+  }
+  return filterInvoicesByView(viewType)
+    .filter((inv) => (!customerId || inv.customer_id === customerId) && inv.received_year === year)
+    .reduce((sum, inv) => sum + Number(inv.received_amount) / 10, 0);
 }
 
 function computeDashboardTotals(viewType, years) {
