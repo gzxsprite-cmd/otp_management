@@ -816,6 +816,7 @@ function renderDetail(moduleId, id) {
       </div>
     </div>
   `;
+  bindPreviewToolbar();
   if (moduleId === "contract") {
     const tabs = content.querySelectorAll(".tabs button[data-tab]");
     const presign = state.preSignContracts.find((p) => p.id === record.presign_contract_id);
@@ -825,10 +826,17 @@ function renderDetail(moduleId, id) {
         tab.classList.add("active");
         const panel = content.querySelector("#filePreviewPanel");
         if (tab.dataset.tab === "presign-file") {
-          panel.innerHTML = renderFilePreview(presign?.source_file_url || "#", presign?.source_file_type || "pdf");
+          panel.innerHTML = `
+            ${renderFilePreview(presign?.source_file_url || "#", presign?.source_file_type || "pdf")}
+            <div class="subtle">PDF快照（占位图）— 用于演示合同内容预览</div>
+          `;
         } else {
-          panel.innerHTML = renderFilePreview(record.signed_file_url || "#", record.signed_file_name?.includes(".doc") ? "word" : "pdf");
+          panel.innerHTML = `
+            ${renderFilePreview(record.signed_file_url || "#", record.signed_file_name?.includes(".doc") ? "word" : "pdf")}
+            <div class="subtle">PDF快照（占位图）— 用于演示合同内容预览</div>
+          `;
         }
+        bindPreviewToolbar();
       });
     });
   }
@@ -908,6 +916,7 @@ function renderDetailExtras(moduleId, record) {
       <div class="panel">
         <div class="page-title">代签文件快照</div>
         ${renderFilePreview(record.source_file_url || "#", record.source_file_type)}
+        <div class="subtle">PDF快照（占位图）— 用于演示合同内容预览</div>
       </div>
       <div class="panel">
         <div class="page-title">付款节点</div>
@@ -941,10 +950,13 @@ function renderDetailExtras(moduleId, record) {
       <div class="panel">
         <div class="page-title">合同文件快照</div>
         <div class="tabs">
-          <button class="active" data-tab="presign-file">代签文件快照</button>
-          <button data-tab="signed-file">归档合同快照</button>
+          <button class="active" data-tab="presign-file">代签文件快照（占位图）</button>
+          <button data-tab="signed-file">归档合同快照（占位图）</button>
         </div>
-        <div id="filePreviewPanel">${renderFilePreview(presign?.source_file_url || "#", presign?.source_file_type || "pdf")}</div>
+        <div id="filePreviewPanel">
+          ${renderFilePreview(presign?.source_file_url || "#", presign?.source_file_type || "pdf")}
+          <div class="subtle">PDF快照（占位图）— 用于演示合同内容预览</div>
+        </div>
       </div>
     `;
   }
@@ -952,15 +964,35 @@ function renderDetailExtras(moduleId, record) {
 }
 
 function renderFilePreview(url, type) {
-  if (type === "word") {
-    return `<div class="subtle">word 预览 mock（${url}）</div>`;
-  }
   return `
-    <object data="${url}" type="application/pdf" width="100%" height="360">
-      <iframe src="${url}" width="100%" height="360" title="PDF Preview"></iframe>
-      <a href="${url}">下载查看</a>
-    </object>
+    <div class="preview-toolbar">
+      <button data-preview-action="zoom-in">放大</button>
+      <button data-preview-action="zoom-out">缩小</button>
+      <button data-preview-action="prev">上一页</button>
+      <button data-preview-action="next">下一页</button>
+      <button data-preview-action="download">下载</button>
+    </div>
+    <img class="preview-image" src="assets/mock-pdf-page.svg" alt="PDF快照占位图" />
   `;
+}
+
+function bindPreviewToolbar() {
+  document.querySelectorAll(".preview-toolbar button").forEach((btn) => {
+    btn.addEventListener("click", () => showToast("Demo: not implemented"));
+  });
+}
+
+function showToast(message) {
+  let toast = document.getElementById("toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "toast";
+    toast.className = "toast";
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add("show");
+  setTimeout(() => toast.classList.remove("show"), 1500);
 }
 
 function renderLinkSummaryTable(links) {

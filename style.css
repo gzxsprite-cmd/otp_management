@@ -220,6 +220,33 @@ button:disabled {
   font-size: 12px;
   color: var(--muted);
 }
+.preview-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.preview-image {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+}
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  background: #111827;
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
+  font-size: 12px;
+  z-index: 50;
+}
+.toast.show {
+  opacity: 1;
+}
 .stat-card {
   padding: 10px;
   border: 1px solid var(--border);
