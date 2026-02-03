@@ -5,6 +5,7 @@ const state = {
       title: "看板应用",
       items: [
         { id: "dashboard", label: "OTP 总览看板", route: "#/dashboard" },
+        { id: "mapping", label: "Mapping & 计算结果查看", route: "#/mapping" },
       ],
     },
     {
@@ -322,6 +323,10 @@ function seedData() {
       created_at: "2024-01-10",
       created_by: "pmo_chen",
       updated_at: "2024-02-05",
+      anomaly_status: "open",
+      close_reason: "",
+      evidence_link_text: "",
+      comment: "",
       is_deleted: false,
     };
   });
@@ -409,6 +414,8 @@ function seedData() {
     }
     return links;
   });
+  // Ensure case3 PMS project has no linked contracts
+  state.preSignLinks = state.preSignLinks.filter((link) => !(link.link_type === "pms" && link.pms_project_id === 3));
 
   let preNodeId = 1;
   state.preSignPaymentNodes = state.preSignContracts.flatMap((contract) => {
@@ -484,6 +491,59 @@ function seedData() {
       is_deleted: false,
     };
   });
+
+  // Seed scenario adjustments for mapping overview cases
+  const case1Project = state.pmsProjects[0];
+  const case2Project = state.pmsProjects[1];
+  const case3Project = state.pmsProjects[2];
+  if (case1Project) {
+    case1Project.pid = "123456";
+    case1Project.project_complexity = "adaptation";
+    case1Project.project_phase = "sop";
+    case1Project.anomaly_status = "open";
+  }
+  if (case2Project) {
+    case2Project.pid = "234567";
+    case2Project.project_complexity = "EC";
+    case2Project.project_phase = "running";
+    case2Project.anomaly_status = "open";
+  }
+  if (case3Project) {
+    case3Project.pid = "345678";
+    case3Project.project_complexity = "minor_change";
+    case3Project.project_phase = "sop";
+    case3Project.anomaly_status = "open";
+    case3Project.comment = "缺少报价与合同";
+  }
+  const snapshotCase1 = state.snapshots[0];
+  if (snapshotCase1) {
+    snapshotCase1.pid = "123456";
+    snapshotCase1.se_status = "SE4";
+  }
+  const snapshotCase2 = state.snapshots[1];
+  if (snapshotCase2) {
+    snapshotCase2.pid = "234567";
+    snapshotCase2.se_status = "SE2";
+  }
+  const snapshotCase3 = state.snapshots[2];
+  if (snapshotCase3) {
+    snapshotCase3.pid = "345678";
+    snapshotCase3.se_status = "SE1";
+  }
+  if (state.preSignContracts[0]) {
+    state.preSignContracts[0].total_amount_excl_tax = 90;
+    state.preSignContracts[0].total_amount_incl_tax = 100;
+  }
+  if (state.contracts[0]) {
+    state.contracts[0].total_amount_excl_tax = 90;
+    state.contracts[0].total_amount_incl_tax = 100;
+  }
+  state.invoices.forEach((inv) => {
+    if (inv.contract_id === 2) inv.contract_id = 1;
+  });
+  const contract1Invoices = state.invoices.filter((inv) => inv.contract_id === 1);
+  if (contract1Invoices[0]) contract1Invoices[0].received_amount = 50;
+  if (contract1Invoices[1]) contract1Invoices[1].received_amount = 47;
 
   state.syncJobs = [
     { id: 1, job_type: "salesforce", last_run_at: "2024-03-20 09:00", last_status: "success", triggered_by: "data_ops", records_added: 12, records_updated: 8 },
@@ -2407,6 +2467,391 @@ function getContract(id) {
   return state.contracts.find((c) => c.id === id);
 }
 
+function renderMappingOverview() {
+  const content = document.getElementById("content");
+  const user = getUser();
+  const filterState = state.ui.mappingFilters || {};
+  const projects = applyPermissionScope("pms", state.pmsProjects);
+  const filtered = projects.filter((project) => {
+    if (filterState.search) {
+      const haystack = `${project.project_name} ${project.pms_id} ${project.pid} ${project.mcrl0} ${project.mcrl1} ${project.mcrl2}`;
+      if (!haystack.includes(filterState.search)) return false;
+    }
+    if (filterState.customer_id && String(project.customer_id) !== filterState.customer_id) return false;
+    if (filterState.product_type_id && String(project.product_type_id) !== filterState.product_type_id) return false;
+    if (filterState.project_complexity && project.project_complexity !== filterState.project_complexity) return false;
+    if (filterState.project_phase && project.project_phase !== filterState.project_phase) return false;
+    const status = getMappingStatus(project);
+    if (filterState.salesforce_status && status.salesforce.status !== filterState.salesforce_status) return false;
+    if (filterState.contract_status && status.contract.status !== filterState.contract_status) return false;
+    if (filterState.invoice_status && status.invoice.status !== filterState.invoice_status) return false;
+    if (filterState.anomaly_status && status.anomaly.state !== filterState.anomaly_status) return false;
+    if (filterState.remain_min || filterState.remain_max) {
+      if (status.invoiceRemain.value === null) return false;
+      const min = Number(filterState.remain_min || 0);
+      const max = Number(filterState.remain_max || 100);
+      if (status.invoiceRemain.value < min || status.invoiceRemain.value > max) return false;
+    }
+    return true;
+  });
+
+  content.innerHTML = `
+    <div class="panel">
+      <div class="page-title">Mapping & 计算结果查看</div>
+      <div class="filters">
+        <input placeholder="搜索 PMS项目名 / pms_id / pid / mcrl" data-filter="search" value="${filterState.search || ""}" />
+        <input placeholder="客户" data-filter="customer_id" value="${filterState.customer_id || ""}" />
+        <input placeholder="产品类型" data-filter="product_type_id" value="${filterState.product_type_id || ""}" />
+        <input placeholder="项目类型" data-filter="project_complexity" value="${filterState.project_complexity || ""}" />
+        <input placeholder="项目阶段" data-filter="project_phase" value="${filterState.project_phase || ""}" />
+        <input placeholder="Salesforce状态(√/X/!)" data-filter="salesforce_status" value="${filterState.salesforce_status || ""}" />
+        <input placeholder="合同状态(√/X/!)" data-filter="contract_status" value="${filterState.contract_status || ""}" />
+        <input placeholder="回款状态(√/X/!)" data-filter="invoice_status" value="${filterState.invoice_status || ""}" />
+        <input placeholder="异常状态(open/closed)" data-filter="anomaly_status" value="${filterState.anomaly_status || ""}" />
+        <input placeholder="回款剩余%最小" data-filter="remain_min" value="${filterState.remain_min || ""}" />
+        <input placeholder="回款剩余%最大" data-filter="remain_max" value="${filterState.remain_max || ""}" />
+      </div>
+    </div>
+    <div class="panel">
+      <table class="table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>客户</th>
+            <th>产品类型</th>
+            <th>PMS项目名</th>
+            <th>项目类型</th>
+            <th>项目Status</th>
+            <th>Salesforce SE3/SE4</th>
+            <th>Contract</th>
+            <th>Invoice</th>
+            <th>Invoice remain %</th>
+            <th>异常状态</th>
+            <th>Comment/证据状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filtered
+            .map((project) => renderMappingRow(project, user))
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  content.querySelectorAll("[data-filter]").forEach((input) => {
+    input.addEventListener("input", (e) => {
+      state.ui.mappingFilters = { ...filterState, [e.target.dataset.filter]: e.target.value };
+      renderMappingOverview();
+    });
+  });
+  content.querySelectorAll("[data-expand]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const projectId = Number(btn.dataset.expand);
+      toggleMappingExpand(projectId);
+      renderMappingOverview();
+    });
+  });
+  content.querySelectorAll("[data-handle-anomaly]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const projectId = Number(btn.dataset.handleAnomaly);
+      openAnomalyModal(projectId);
+    });
+  });
+  content.querySelectorAll("[data-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const projectId = Number(btn.dataset.projectId);
+      state.ui.mappingTabs = { ...state.ui.mappingTabs, [projectId]: btn.dataset.tab };
+      renderMappingOverview();
+    });
+  });
+}
+
+function renderMappingRow(project, user) {
+  const status = getMappingStatus(project);
+  const expanded = (state.ui.mappingExpanded || []).includes(project.id);
+  const anomalyText = status.anomaly.text;
+  const canHandle = canHandleAnomaly(user, project);
+  return `
+    <tr>
+      <td><button data-expand="${project.id}">${expanded ? "▾" : "▸"}</button></td>
+      <td>${getCustomer(project.customer_id)?.short_name || ""}</td>
+      <td>${getProduct(project.product_type_id)?.name || ""}</td>
+      <td>${project.project_name || ""}</td>
+      <td>${project.project_complexity}</td>
+      <td>${project.project_phase}</td>
+      <td>${renderStatusIcon(status.salesforce)}</td>
+      <td>${renderStatusIcon(status.contract)}</td>
+      <td>${renderStatusIcon(status.invoice)}</td>
+      <td>${status.invoiceRemain.label}${status.invoiceRemain.warning ? ` <span class="status-icon status-warn" title="${status.invoiceRemain.warning}">!</span>` : ""}</td>
+      <td>${status.anomaly.state === "closed" ? `<span class="badge muted" title="${status.anomaly.reason}">已关闭</span>` : anomalyText}</td>
+      <td>${project.comment || status.anomaly.reason || "-"}${project.evidence_link_text ? ` · ${project.evidence_link_text}` : ""}</td>
+      <td>${canHandle ? `<button data-handle-anomaly="${project.id}">处理异常</button>` : ""}</td>
+    </tr>
+    ${expanded ? renderMappingDetails(project) : ""}
+  `;
+}
+
+function renderMappingDetails(project) {
+  const tabState = state.ui.mappingTabs || {};
+  const activeTab = tabState[project.id] || "salesforce";
+  return `
+    <tr class="mapping-details">
+      <td colspan="13">
+        <div class="tabs">
+          <button data-tab="salesforce" data-project-id="${project.id}" ${activeTab === "salesforce" ? "class='active'" : ""}>Salesforce 明细</button>
+          <button data-tab="contract" data-project-id="${project.id}" ${activeTab === "contract" ? "class='active'" : ""}>Contract 明细</button>
+          <button data-tab="invoice" data-project-id="${project.id}" ${activeTab === "invoice" ? "class='active'" : ""}>Invoice 明细</button>
+        </div>
+        ${activeTab === "salesforce" ? renderSalesforceDetails(project) : ""}
+        ${activeTab === "contract" ? renderContractDetails(project) : ""}
+        ${activeTab === "invoice" ? renderInvoiceDetails(project) : ""}
+      </td>
+    </tr>
+  `;
+}
+
+function renderSalesforceDetails(project) {
+  const snapshots = getSnapshotsForProject(project);
+  if (!snapshots.length) return "<div class='subtle'>无匹配 Salesforce 快照</div>";
+  return `
+    <table class="table">
+      <thead><tr><th>PID</th><th>配置</th><th>SE状态</th><th>快照日期</th><th>OTP 年度</th><th>总计</th></tr></thead>
+      <tbody>
+        ${snapshots
+          .map((snap) => {
+            const parsed = parseAmountText(snap.otp_amounts_text);
+            const total = parsed.reduce((sum, row) => sum + row.amount, 0);
+            return `
+            <tr>
+              <td>${snap.pid}</td>
+              <td>${getConfiguration(snap.configuration_id)?.name || ""}</td>
+              <td>${snap.se_status}</td>
+              <td>${snap.snapshot_date}</td>
+              <td>${parsed.map((row) => `${row.year}: ${row.amount}`).join(" / ")}</td>
+              <td>${total}</td>
+            </tr>
+          `;
+          })
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderContractDetails(project) {
+  const contracts = getContractsForProject(project);
+  if (!contracts.length) return "<div class='subtle'>无关联合同</div>";
+  const rows = contracts.map((contract) => {
+    const nodes = state.contractPaymentNodes.filter((n) => n.contract_id === contract.id);
+    const nodeRows = nodes
+      .map((node) => {
+        const amount = node.pay_amount || (node.pay_ratio && contract.total_amount_incl_tax ? (node.pay_ratio / 100) * contract.total_amount_incl_tax : 0);
+        return `${node.node_name}(${node.planned_year}): ${amount.toFixed(2)}`;
+      })
+      .join(" / ");
+    return `
+      <tr>
+        <td>${contract.internal_contract_id}</td>
+        <td>${contract.customer_contract_no}</td>
+        <td>${contract.contract_title}</td>
+        <td>${nodeRows || "-"}</td>
+      </tr>
+    `;
+  });
+  return `
+    <table class="table">
+      <thead><tr><th>内部合同号</th><th>客户合同号</th><th>标题</th><th>付款节点</th></tr></thead>
+      <tbody>${rows.join("")}</tbody>
+    </table>
+  `;
+}
+
+function renderInvoiceDetails(project) {
+  const contracts = getContractsForProject(project);
+  const invoices = state.invoices.filter((inv) => contracts.some((c) => c.id === inv.contract_id));
+  if (!invoices.length) return "<div class='subtle'>无回款记录</div>";
+  const totals = invoices.reduce((acc, inv) => {
+    acc[inv.received_year] = (acc[inv.received_year] || 0) + Number(inv.received_amount);
+    return acc;
+  }, {});
+  return `
+    <table class="table">
+      <thead><tr><th>回款日期</th><th>年度</th><th>金额</th><th>参考号</th></tr></thead>
+      <tbody>
+        ${invoices
+          .map(
+            (inv) => `
+          <tr>
+            <td>${inv.received_date}</td>
+            <td>${inv.received_year}</td>
+            <td>${inv.received_amount}</td>
+            <td>${inv.payment_reference_no}</td>
+          </tr>
+        `
+          )
+          .join("")}
+      </tbody>
+    </table>
+    <div class="subtle">年度汇总：${Object.entries(totals)
+      .map(([year, amount]) => `${year}: ${amount}`)
+      .join(" / ")}</div>
+  `;
+}
+
+function toggleMappingExpand(projectId) {
+  const expanded = state.ui.mappingExpanded || [];
+  state.ui.mappingExpanded = expanded.includes(projectId)
+    ? expanded.filter((id) => id !== projectId)
+    : [...expanded, projectId];
+}
+
+function renderStatusIcon(status) {
+  return `<span class="status-icon ${status.className}" title="${status.reason}">${status.label}</span>`;
+}
+
+function getMappingStatus(project) {
+  const snapshots = getSnapshotsForProject(project);
+  let salesforce = { label: "X", className: "status-bad", reason: "无匹配报价" };
+  if (!project.pid) {
+    salesforce = { label: "X", className: "status-bad", reason: "缺少PID" };
+  } else if (!snapshots.length) {
+    salesforce = { label: "X", className: "status-bad", reason: "无匹配快照" };
+  } else {
+    const hasSe34 = snapshots.some((s) => ["SE3", "SE4"].includes(s.se_status));
+    const configSet = new Set(snapshots.map((s) => s.configuration_id).filter(Boolean));
+    if (configSet.size > 1) {
+      salesforce = { label: "!", className: "status-warn", reason: "多配置冲突" };
+    } else if (hasSe34) {
+      salesforce = { label: "√", className: "status-good", reason: "已匹配 SE3/SE4" };
+    } else {
+      salesforce = { label: "X", className: "status-bad", reason: "仅 SE1/SE2" };
+    }
+  }
+  const contracts = getContractsForProject(project);
+  let contract = { label: "X", className: "status-bad", reason: "无关联合同" };
+  if (contracts.length) {
+    const hasNodes = contracts.some((c) => state.contractPaymentNodes.some((n) => n.contract_id === c.id));
+    const hasAmount = contracts.some((c) => c.total_amount_incl_tax);
+    contract = hasNodes && hasAmount
+      ? { label: "√", className: "status-good", reason: "合同已关联" }
+      : { label: "!", className: "status-warn", reason: "合同缺少付款节点或金额" };
+  }
+  const invoices = state.invoices.filter((inv) => contracts.some((c) => c.id === inv.contract_id));
+  let invoice = { label: "X", className: "status-bad", reason: "无回款" };
+  if (invoices.length && contracts.length) {
+    invoice = { label: "√", className: "status-good", reason: "存在回款" };
+  } else if (invoices.length && !contracts.length) {
+    invoice = { label: "!", className: "status-warn", reason: "回款合同未匹配项目" };
+  }
+  const invoiceRemain = computeInvoiceRemain(project, contracts, invoices);
+  const anomaly = computeAnomaly(project, salesforce, contract, invoice, invoiceRemain);
+  return { salesforce, contract, invoice, invoiceRemain, anomaly };
+}
+
+function getSnapshotsForProject(project) {
+  if (!project.pid) return [];
+  return state.snapshots.filter((snap) => snap.pid === project.pid);
+}
+
+function getContractsForProject(project) {
+  const presignIds = state.preSignLinks
+    .filter((link) => link.link_type === "pms" && link.pms_project_id === project.id)
+    .map((link) => link.presign_contract_id);
+  return state.contracts.filter((c) => presignIds.includes(c.presign_contract_id));
+}
+
+function computeInvoiceRemain(project, contracts, invoices) {
+  let plannedTotal = 0;
+  contracts.forEach((contract) => {
+    const nodes = state.contractPaymentNodes.filter((n) => n.contract_id === contract.id);
+    nodes.forEach((node) => {
+      if (node.pay_amount) plannedTotal += Number(node.pay_amount);
+      else if (node.pay_ratio && contract.total_amount_incl_tax) plannedTotal += (node.pay_ratio / 100) * contract.total_amount_incl_tax;
+    });
+  });
+  const invoicedTotal = invoices.reduce((sum, inv) => sum + Number(inv.received_amount), 0);
+  if (!plannedTotal) {
+    return { value: null, label: "N/A", warning: "缺少合同支付节点金额/比例" };
+  }
+  const remain = Math.max(0, 1 - invoicedTotal / plannedTotal) * 100;
+  return { value: Math.round(remain), label: `${Math.round(remain)}%` };
+}
+
+function computeAnomaly(project, salesforce, contract, invoice, invoiceRemain) {
+  if (project.anomaly_status === "closed") {
+    return { state: "closed", text: "已关闭", reason: project.close_reason || "已关闭" };
+  }
+  if (project.project_phase === "sop" && salesforce.label === "X" && contract.label === "X") {
+    return { state: "open", text: "异常-缺少报价与合同", reason: "SOP阶段缺少报价/合同" };
+  }
+  if (project.project_phase === "sop" && contract.label === "√" && invoiceRemain.value === 100) {
+    return { state: "open", text: "异常-已完成但未回款", reason: "SOP阶段合同已关联但回款为0" };
+  }
+  if (project.project_complexity === "EC" && salesforce.label === "X" && contract.label === "√") {
+    return { state: "open", text: "符合预期-EC无报价", reason: "EC项目无报价符合预期" };
+  }
+  if (["adaptation", "pilot"].includes(project.project_complexity) && salesforce.label === "X") {
+    return { state: "open", text: "需确认-应存在报价", reason: "适配/试点项目缺少报价" };
+  }
+  return { state: "open", text: "正常", reason: "" };
+}
+
+function canHandleAnomaly(user, project) {
+  const groupName = getGroup(user.group_id).name;
+  if (groupName === "Admin" || groupName === "Data_Operator" || groupName === "PMO/PJM") return true;
+  if (groupName === "CM") {
+    const assignedCustomers = state.customerAssignments.filter((a) => a.user_id === user.id && a.active).map((a) => a.customer_id);
+    return assignedCustomers.includes(project.customer_id);
+  }
+  return false;
+}
+
+function openAnomalyModal(projectId) {
+  const modal = document.getElementById("modal");
+  const project = state.pmsProjects.find((p) => p.id === projectId);
+  if (!project) return;
+  modal.innerHTML = `
+    <div class="panel">
+      <div class="page-title">处理异常 - ${project.project_name}</div>
+      <div class="form-grid">
+        <label><div class="subtle">状态</div><select id="anomalyStatus">
+          <option value="open" ${project.anomaly_status === "open" ? "selected" : ""}>open</option>
+          <option value="closed" ${project.anomaly_status === "closed" ? "selected" : ""}>closed</option>
+        </select></label>
+        <label><div class="subtle">关闭原因</div><input id="closeReason" value="${project.close_reason || ""}" /></label>
+        <label><div class="subtle">证据链接</div><input id="evidenceLink" value="${project.evidence_link_text || ""}" /></label>
+        <label><div class="subtle">备注</div><input id="anomalyComment" value="${project.comment || ""}" /></label>
+      </div>
+      <div class="form-actions">
+        <button id="closeModal">取消</button>
+        <button class="primary" id="saveAnomaly">保存</button>
+      </div>
+    </div>
+  `;
+  modal.classList.remove("hidden");
+  modal.querySelector("#closeModal").addEventListener("click", () => closeModal());
+  modal.querySelector("#saveAnomaly").addEventListener("click", () => {
+    project.anomaly_status = modal.querySelector("#anomalyStatus").value;
+    project.close_reason = modal.querySelector("#closeReason").value;
+    project.evidence_link_text = modal.querySelector("#evidenceLink").value;
+    project.comment = modal.querySelector("#anomalyComment").value;
+    closeModal();
+    renderMappingOverview();
+  });
+}
+
+function parseAmountText(text) {
+  if (!text) return [];
+  return text.split("\n").map((line) => {
+    const [yearRaw, amountRaw] = line.split(":");
+    const year = yearRaw?.trim();
+    const amount = Number((amountRaw || "").replace(/[^\d.]/g, "")) || 0;
+    return { year, amount };
+  });
+}
+
 function renderDashboard() {
   const content = document.getElementById("content");
   const currentYear = new Date().getFullYear();
@@ -2718,6 +3163,7 @@ function route() {
   const [base, module, action, id] = hash.replace("#/", "").split("/");
 
   if (hash === "#/dashboard") return renderDashboard();
+  if (hash === "#/mapping") return renderMappingOverview();
   if (hash === "#/permissions") return renderPermissionsMatrix();
   if (hash === "#/audit") return renderAuditLogs();
   if (hash === "#/sync") return renderSyncJobs();
