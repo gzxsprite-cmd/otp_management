@@ -49,6 +49,8 @@ const state = {
   pmsMilestones: [],
   preSignContracts: [],
   preSignLinks: [],
+  preSignPmsAllocations: [],
+  preSignSfAllocations: [],
   preSignPaymentNodes: [],
   contracts: [],
   contractPaymentNodes: [],
@@ -416,6 +418,88 @@ function seedData() {
   });
   // Ensure case3 PMS project has no linked contracts
   state.preSignLinks = state.preSignLinks.filter((link) => !(link.link_type === "pms" && link.pms_project_id === 3));
+
+  let pmsAllocId = 1;
+  state.preSignPmsAllocations = state.preSignContracts.flatMap((contract, i) => {
+    const allocations = [];
+    const pmsProjectA = state.pmsProjects[i % state.pmsProjects.length];
+    const pmsProjectB = state.pmsProjects[(i + 1) % state.pmsProjects.length];
+    if (i === 0) {
+      allocations.push({
+        id: pmsAllocId++,
+        presign_contract_id: contract.id,
+        pms_project_id: pmsProjectA.id,
+        allocation_ratio: 60,
+        allocation_amount_excl_tax: contract.total_amount_excl_tax * 0.6,
+        allocation_amount_incl_tax: contract.total_amount_incl_tax * 0.6,
+        note: "主项目",
+      });
+      allocations.push({
+        id: pmsAllocId++,
+        presign_contract_id: contract.id,
+        pms_project_id: pmsProjectB.id,
+        allocation_ratio: 40,
+        allocation_amount_excl_tax: contract.total_amount_excl_tax * 0.4,
+        allocation_amount_incl_tax: contract.total_amount_incl_tax * 0.4,
+        note: "分配项目",
+      });
+    } else {
+      allocations.push({
+        id: pmsAllocId++,
+        presign_contract_id: contract.id,
+        pms_project_id: pmsProjectA.id,
+        allocation_ratio: 100,
+        allocation_amount_excl_tax: contract.total_amount_excl_tax,
+        allocation_amount_incl_tax: contract.total_amount_incl_tax,
+        note: "单项目",
+      });
+    }
+    return allocations;
+  });
+
+  let sfAllocId = 1;
+  state.preSignSfAllocations = state.preSignContracts.flatMap((contract, i) => {
+    const allocations = [];
+    const snapA = state.snapshots[i % state.snapshots.length];
+    const snapB = state.snapshots[(i + 1) % state.snapshots.length];
+    if (i === 1) {
+      allocations.push({
+        id: sfAllocId++,
+        presign_contract_id: contract.id,
+        sf_snapshot_id: snapA.id,
+        pid: snapA.pid,
+        configuration_id: snapA.configuration_id,
+        allocation_ratio: 70,
+        allocation_amount_excl_tax: contract.total_amount_excl_tax * 0.7,
+        allocation_amount_incl_tax: contract.total_amount_incl_tax * 0.7,
+        note: "主机会",
+      });
+      allocations.push({
+        id: sfAllocId++,
+        presign_contract_id: contract.id,
+        sf_snapshot_id: snapB.id,
+        pid: snapB.pid,
+        configuration_id: snapB.configuration_id,
+        allocation_ratio: 30,
+        allocation_amount_excl_tax: contract.total_amount_excl_tax * 0.3,
+        allocation_amount_incl_tax: contract.total_amount_incl_tax * 0.3,
+        note: "次机会",
+      });
+    } else {
+      allocations.push({
+        id: sfAllocId++,
+        presign_contract_id: contract.id,
+        sf_snapshot_id: snapA.id,
+        pid: snapA.pid,
+        configuration_id: snapA.configuration_id,
+        allocation_ratio: 100,
+        allocation_amount_excl_tax: contract.total_amount_excl_tax,
+        allocation_amount_incl_tax: contract.total_amount_incl_tax,
+        note: "单机会",
+      });
+    }
+    return allocations;
+  });
 
   let preNodeId = 1;
   state.preSignPaymentNodes = state.preSignContracts.flatMap((contract) => {
@@ -1179,7 +1263,10 @@ function renderPreSignForm(record) {
   const content = document.getElementById("content");
   const isEdit = Boolean(record);
   const links = record ? state.preSignLinks.filter((l) => l.presign_contract_id === record.id) : [];
+  const pmsAllocations = record ? state.preSignPmsAllocations.filter((a) => a.presign_contract_id === record.id) : [];
+  const sfAllocations = record ? state.preSignSfAllocations.filter((a) => a.presign_contract_id === record.id) : [];
   const paymentNodes = record ? state.preSignPaymentNodes.filter((n) => n.pre_sign_contract_id === record.id) : [];
+  const amountView = state.ui.presignAmountView || "incl";
   content.innerHTML = `
     <div class="panel">
       <div class="page-title">代签合同/协议 / ${isEdit ? "编辑" : "新建"}</div>
@@ -1220,8 +1307,29 @@ function renderPreSignForm(record) {
         <div class="panel">
           <div class="page-title">项目映射</div>
           <div class="form-actions">
-            <button type="button" id="openPmsPicker">关联PMS项目</button>
-            <button type="button" id="openSalesforcePicker">关联Salesforce项目</button>
+            <span class="subtle">金额口径：</span>
+            <button type="button" id="toggleAmountView">${amountView === "incl" ? "含税" : "未税"}</button>
+            <span class="subtle" id="amountToggleHint"></span>
+          </div>
+          <div class="panel">
+            <div class="page-title">PMS项目关联与金额分配 <span class="badge">必填（至少1个）</span></div>
+            <div class="subtle">请关联 PMS 项目并分配合同金额；PMS 是必填。</div>
+            <div class="form-actions">
+              <button type="button" id="openPmsPicker">关联PMS项目</button>
+              <button type="button" id="splitPmsEqual">一键均分</button>
+            </div>
+            <div id="pmsAllocationSummary" class="subtle"></div>
+            <div id="pmsAllocationRows"></div>
+          </div>
+          <div class="panel">
+            <div class="page-title">Salesforce项目关联与金额分配 <span class="badge" id="sfRequiredBadge">选填</span></div>
+            <div class="subtle">名义类型为 new_acquisition / mixed 时必填。</div>
+            <div class="form-actions">
+              <button type="button" id="openSalesforcePicker">关联Salesforce项目</button>
+              <button type="button" id="splitSfEqual">一键均分</button>
+            </div>
+            <div id="sfAllocationSummary" class="subtle"></div>
+            <div id="sfAllocationRows"></div>
           </div>
           <div id="linkRows"></div>
           <button type="button" id="addLink">+ 添加映射</button>
@@ -1242,6 +1350,8 @@ function renderPreSignForm(record) {
   `;
 
   const linkRows = content.querySelector("#linkRows");
+  const pmsAllocationRows = content.querySelector("#pmsAllocationRows");
+  const sfAllocationRows = content.querySelector("#sfAllocationRows");
   const paymentNodeRows = content.querySelector("#paymentNodeRows");
   let currentPayments = paymentNodes.length
     ? paymentNodes.map((n) => ({ ...n }))
@@ -1266,6 +1376,98 @@ function renderPreSignForm(record) {
   };
   let currentLinks = links.length ? links.map((l) => ({ ...l })) : [{ link_type: "pms" }];
   renderLinks(currentLinks);
+  let currentPmsAllocations = pmsAllocations.length
+    ? pmsAllocations.map((a) => ({ ...a }))
+    : [];
+  let currentSfAllocations = sfAllocations.length
+    ? sfAllocations.map((a) => ({ ...a }))
+    : [];
+
+  const updateRequiredBadge = () => {
+    const nominalType = content.querySelector("select[name='project_nominal_type']").value;
+    const badge = content.querySelector("#sfRequiredBadge");
+    badge.textContent = ["new_acquisition", "mixed"].includes(nominalType) ? "必填" : "选填";
+  };
+  updateRequiredBadge();
+  content.querySelector("select[name='project_nominal_type']").addEventListener("change", updateRequiredBadge);
+
+  const amountToggleHint = content.querySelector("#amountToggleHint");
+  const totalIncl = Number(content.querySelector("input[name='total_amount_incl_tax']").value || 0);
+  const totalExcl = Number(content.querySelector("input[name='total_amount_excl_tax']").value || 0);
+  if (!totalIncl) {
+    amountToggleHint.textContent = "含税总额缺失";
+  } else if (!totalExcl) {
+    amountToggleHint.textContent = "未税总额缺失";
+  }
+
+  const renderAllocationRows = (rows, type) => {
+    const totalIncl = Number(content.querySelector("input[name='total_amount_incl_tax']").value || 0);
+    const totalExcl = Number(content.querySelector("input[name='total_amount_excl_tax']").value || 0);
+    const total = amountView === "incl" ? totalIncl : totalExcl;
+    const hasTotal = amountView === "incl" ? totalIncl : totalExcl;
+    const toggleDisabled = !hasTotal ? "disabled" : "";
+    const sum = rows.reduce((acc, row) => acc + Number(amountView === "incl" ? row.allocation_amount_incl_tax : row.allocation_amount_excl_tax || 0), 0);
+    const remain = total ? Math.round((total - sum) * 100) / 100 : 0;
+    const summary = `合同总金额：${total || 0}，已分配：${sum.toFixed(2)}，剩余：${remain.toFixed(2)}`;
+    if (type === "pms") {
+      content.querySelector("#pmsAllocationSummary").textContent = summary;
+      pmsAllocationRows.innerHTML = rows
+        .map(
+          (row, idx) => `
+        <div class="form-grid" data-pms-alloc="${idx}">
+          <label><div class="subtle">PMS项目</div><input name="pms_project_name" value="${getPmsProject(row.pms_project_id)?.project_name || ""}" readonly /></label>
+          <label><div class="subtle">比例%</div><input name="allocation_ratio" value="${row.allocation_ratio ?? ""}" /></label>
+          <label><div class="subtle">金额(${amountView === "incl" ? "含税" : "未税"})</div><input name="allocation_amount" value="${amountView === "incl" ? row.allocation_amount_incl_tax ?? "" : row.allocation_amount_excl_tax ?? ""}" ${toggleDisabled} /></label>
+          <label><div class="subtle">备注</div><input name="note" value="${row.note || ""}" /></label>
+        </div>
+      `
+        )
+        .join("");
+    } else {
+      content.querySelector("#sfAllocationSummary").textContent = summary;
+      sfAllocationRows.innerHTML = rows
+        .map(
+          (row, idx) => `
+        <div class="form-grid" data-sf-alloc="${idx}">
+          <label><div class="subtle">Salesforce项目</div><input name="sf_label" value="${row.pid || ""} ${row.configuration_id ? getConfiguration(row.configuration_id)?.name : ""}" readonly /></label>
+          <label><div class="subtle">比例%</div><input name="allocation_ratio" value="${row.allocation_ratio ?? ""}" /></label>
+          <label><div class="subtle">金额(${amountView === "incl" ? "含税" : "未税"})</div><input name="allocation_amount" value="${amountView === "incl" ? row.allocation_amount_incl_tax ?? "" : row.allocation_amount_excl_tax ?? ""}" ${toggleDisabled} /></label>
+          <label><div class="subtle">备注</div><input name="note" value="${row.note || ""}" /></label>
+        </div>
+      `
+        )
+        .join("");
+    }
+    bindAllocationCalculation(rows, type, totalIncl, totalExcl);
+  };
+
+  const splitEqual = (rows, totalIncl, totalExcl) => {
+    const count = rows.length || 1;
+    const ratio = Math.round((100 / count) * 10000) / 10000;
+    rows.forEach((row, idx) => {
+      row.allocation_ratio = idx === count - 1 ? Math.round((100 - ratio * (count - 1)) * 10000) / 10000 : ratio;
+      row.allocation_amount_incl_tax = totalIncl ? Math.round((totalIncl * row.allocation_ratio) / 100 * 100) / 100 : 0;
+      row.allocation_amount_excl_tax = totalExcl ? Math.round((totalExcl * row.allocation_ratio) / 100 * 100) / 100 : 0;
+    });
+  };
+
+  const initAllocations = () => {
+    const totalIncl = Number(content.querySelector("input[name='total_amount_incl_tax']").value || 0);
+    const totalExcl = Number(content.querySelector("input[name='total_amount_excl_tax']").value || 0);
+    if (currentPmsAllocations.length === 1) {
+      currentPmsAllocations[0].allocation_ratio = 100;
+      currentPmsAllocations[0].allocation_amount_incl_tax = totalIncl;
+      currentPmsAllocations[0].allocation_amount_excl_tax = totalExcl;
+    }
+    if (currentSfAllocations.length === 1) {
+      currentSfAllocations[0].allocation_ratio = 100;
+      currentSfAllocations[0].allocation_amount_incl_tax = totalIncl;
+      currentSfAllocations[0].allocation_amount_excl_tax = totalExcl;
+    }
+    renderAllocationRows(currentPmsAllocations, "pms");
+    renderAllocationRows(currentSfAllocations, "sf");
+  };
+  initAllocations();
 
   content.querySelector("#addLink").addEventListener("click", () => {
     currentLinks.push({ link_type: "pms" });
@@ -1296,6 +1498,8 @@ function renderPreSignForm(record) {
 
   content.querySelector("#openPmsPicker").addEventListener("click", () => {
     openLinkPicker("pms", (selected) => {
+      const totalIncl = Number(content.querySelector("input[name='total_amount_incl_tax']").value || 0);
+      const totalExcl = Number(content.querySelector("input[name='total_amount_excl_tax']").value || 0);
       selected.forEach((item) => {
         currentLinks.push({
           link_type: "pms",
@@ -1303,12 +1507,27 @@ function renderPreSignForm(record) {
           pms_project_id: item.id,
           comment: "选择关联",
         });
+        if (!currentPmsAllocations.some((row) => row.pms_project_id === item.id)) {
+          currentPmsAllocations.push({
+            id: state.preSignPmsAllocations.length + 1,
+            presign_contract_id: record?.id,
+            pms_project_id: item.id,
+            allocation_ratio: 0,
+            allocation_amount_excl_tax: 0,
+            allocation_amount_incl_tax: 0,
+            note: "",
+          });
+        }
       });
       renderLinks(currentLinks);
+      splitEqual(currentPmsAllocations, totalIncl, totalExcl);
+      renderAllocationRows(currentPmsAllocations, "pms");
     });
   });
   content.querySelector("#openSalesforcePicker").addEventListener("click", () => {
     openLinkPicker("salesforce", (selected) => {
+      const totalIncl = Number(content.querySelector("input[name='total_amount_incl_tax']").value || 0);
+      const totalExcl = Number(content.querySelector("input[name='total_amount_excl_tax']").value || 0);
       selected.forEach((item) => {
         currentLinks.push({
           link_type: "salesforce",
@@ -1317,9 +1536,50 @@ function renderPreSignForm(record) {
           snapshot_ref_id: item.id,
           comment: "选择关联",
         });
+        if (!currentSfAllocations.some((row) => row.sf_snapshot_id === item.id)) {
+          currentSfAllocations.push({
+            id: state.preSignSfAllocations.length + 1,
+            presign_contract_id: record?.id,
+            sf_snapshot_id: item.id,
+            pid: item.pid,
+            configuration_id: item.configuration_id,
+            allocation_ratio: 0,
+            allocation_amount_excl_tax: 0,
+            allocation_amount_incl_tax: 0,
+            note: "",
+          });
+        }
       });
       renderLinks(currentLinks);
+      splitEqual(currentSfAllocations, totalIncl, totalExcl);
+      renderAllocationRows(currentSfAllocations, "sf");
     });
+  });
+  content.querySelector("#splitPmsEqual").addEventListener("click", () => {
+    const totalIncl = Number(content.querySelector("input[name='total_amount_incl_tax']").value || 0);
+    const totalExcl = Number(content.querySelector("input[name='total_amount_excl_tax']").value || 0);
+    splitEqual(currentPmsAllocations, totalIncl, totalExcl);
+    renderAllocationRows(currentPmsAllocations, "pms");
+  });
+  content.querySelector("#splitSfEqual").addEventListener("click", () => {
+    const totalIncl = Number(content.querySelector("input[name='total_amount_incl_tax']").value || 0);
+    const totalExcl = Number(content.querySelector("input[name='total_amount_excl_tax']").value || 0);
+    splitEqual(currentSfAllocations, totalIncl, totalExcl);
+    renderAllocationRows(currentSfAllocations, "sf");
+  });
+  content.querySelector("#toggleAmountView").addEventListener("click", () => {
+    const totalIncl = Number(content.querySelector("input[name='total_amount_incl_tax']").value || 0);
+    const totalExcl = Number(content.querySelector("input[name='total_amount_excl_tax']").value || 0);
+    if (amountView === "incl" && !totalExcl) {
+      showToast("未税总额缺失，无法切换");
+      return;
+    }
+    if (amountView === "excl" && !totalIncl) {
+      showToast("含税总额缺失，无法切换");
+      return;
+    }
+    state.ui.presignAmountView = amountView === "incl" ? "excl" : "incl";
+    renderPreSignForm(record);
   });
 
   content.querySelector("#uploadPresignFile").addEventListener("click", () => {
@@ -1379,10 +1639,44 @@ function renderPreSignForm(record) {
         pay_amount: Number(row.querySelector("input[name='pay_amount']")?.value || 0),
       };
     });
+    const totalIncl = Number(payload.total_amount_incl_tax || 0);
+    const totalExcl = Number(payload.total_amount_excl_tax || 0);
+    const parsedPmsAllocations = Array.from(pmsAllocationRows.querySelectorAll("[data-pms-alloc]")).map((row, idx) => {
+      const amountValue = Number(row.querySelector("input[name='allocation_amount']")?.value || 0);
+      const amountIncl = amountView === "incl" ? amountValue : (totalExcl ? (amountValue / totalExcl) * totalIncl : 0);
+      const amountExcl = amountView === "excl" ? amountValue : (totalIncl ? (amountValue / totalIncl) * totalExcl : 0);
+      return {
+        pms_project_id: currentPmsAllocations[idx]?.pms_project_id,
+        allocation_ratio: Number(row.querySelector("input[name='allocation_ratio']")?.value || 0),
+        allocation_amount_incl_tax: amountIncl,
+        allocation_amount_excl_tax: amountExcl,
+        note: row.querySelector("input[name='note']")?.value || "",
+      };
+    });
+    const parsedSfAllocations = Array.from(sfAllocationRows.querySelectorAll("[data-sf-alloc]")).map((row, idx) => {
+      const amountValue = Number(row.querySelector("input[name='allocation_amount']")?.value || 0);
+      const amountIncl = amountView === "incl" ? amountValue : (totalExcl ? (amountValue / totalExcl) * totalIncl : 0);
+      const amountExcl = amountView === "excl" ? amountValue : (totalIncl ? (amountValue / totalIncl) * totalExcl : 0);
+      return {
+        sf_snapshot_id: currentSfAllocations[idx]?.sf_snapshot_id,
+        pid: currentSfAllocations[idx]?.pid,
+        configuration_id: currentSfAllocations[idx]?.configuration_id,
+        allocation_ratio: Number(row.querySelector("input[name='allocation_ratio']")?.value || 0),
+        allocation_amount_incl_tax: amountIncl,
+        allocation_amount_excl_tax: amountExcl,
+        note: row.querySelector("input[name='note']")?.value || "",
+      };
+    });
 
     const hasPms = parsedLinks.some((l) => l.link_type === "pms" && l.pms_id);
     const needSalesforce = ["new_acquisition", "mixed"].includes(payload.project_nominal_type);
     const hasSalesforce = parsedLinks.some((l) => l.link_type === "salesforce" && l.pid);
+    const pmsRatioSum = parsedPmsAllocations.reduce((sum, row) => sum + row.allocation_ratio, 0);
+    const sfRatioSum = parsedSfAllocations.reduce((sum, row) => sum + row.allocation_ratio, 0);
+    const pmsInclSum = parsedPmsAllocations.reduce((sum, row) => sum + row.allocation_amount_incl_tax, 0);
+    const pmsExclSum = parsedPmsAllocations.reduce((sum, row) => sum + row.allocation_amount_excl_tax, 0);
+    const sfInclSum = parsedSfAllocations.reduce((sum, row) => sum + row.allocation_amount_incl_tax, 0);
+    const sfExclSum = parsedSfAllocations.reduce((sum, row) => sum + row.allocation_amount_excl_tax, 0);
 
     if (!hasPms) {
       content.querySelector("#validationHint").textContent = "校验失败：必须至少映射 1 条 PMS 项目。";
@@ -1390,6 +1684,38 @@ function renderPreSignForm(record) {
     }
     if (needSalesforce && !hasSalesforce) {
       content.querySelector("#validationHint").textContent = "校验失败：名义类型为新开发/混合时必须映射 Salesforce 项目。";
+      return;
+    }
+    if (parsedPmsAllocations.length === 0) {
+      content.querySelector("#validationHint").textContent = "校验失败：必须至少有 1 条 PMS 分配。";
+      return;
+    }
+    if (needSalesforce && parsedSfAllocations.length === 0) {
+      content.querySelector("#validationHint").textContent = "校验失败：必须至少有 1 条 Salesforce 分配。";
+      return;
+    }
+    if (Math.abs(pmsRatioSum - 100) > 0.01) {
+      content.querySelector("#validationHint").textContent = "校验失败：PMS 分配比例合计需为 100%。";
+      return;
+    }
+    if (needSalesforce && Math.abs(sfRatioSum - 100) > 0.01) {
+      content.querySelector("#validationHint").textContent = "校验失败：Salesforce 分配比例合计需为 100%。";
+      return;
+    }
+    if (totalIncl && Math.abs(pmsInclSum - totalIncl) > 0.01) {
+      content.querySelector("#validationHint").textContent = "校验失败：PMS 含税分配金额总和需匹配合同总额。";
+      return;
+    }
+    if (totalExcl && Math.abs(pmsExclSum - totalExcl) > 0.01) {
+      content.querySelector("#validationHint").textContent = "校验失败：PMS 未税分配金额总和需匹配合同总额。";
+      return;
+    }
+    if (needSalesforce && totalIncl && Math.abs(sfInclSum - totalIncl) > 0.01) {
+      content.querySelector("#validationHint").textContent = "校验失败：Salesforce 含税分配金额总和需匹配合同总额。";
+      return;
+    }
+    if (needSalesforce && totalExcl && Math.abs(sfExclSum - totalExcl) > 0.01) {
+      content.querySelector("#validationHint").textContent = "校验失败：Salesforce 未税分配金额总和需匹配合同总额。";
       return;
     }
     if (!parsedPayments.length) {
@@ -1406,6 +1732,32 @@ function renderPreSignForm(record) {
           ...link,
           id: state.preSignLinks.length + 1,
           presign_contract_id: record.id,
+        });
+      });
+      state.preSignPmsAllocations = state.preSignPmsAllocations.filter((a) => a.presign_contract_id !== record.id);
+      parsedPmsAllocations.forEach((alloc) => {
+        state.preSignPmsAllocations.push({
+          id: state.preSignPmsAllocations.length + 1,
+          presign_contract_id: record.id,
+          pms_project_id: alloc.pms_project_id,
+          allocation_ratio: alloc.allocation_ratio,
+          allocation_amount_excl_tax: alloc.allocation_amount_excl_tax,
+          allocation_amount_incl_tax: alloc.allocation_amount_incl_tax,
+          note: alloc.note,
+        });
+      });
+      state.preSignSfAllocations = state.preSignSfAllocations.filter((a) => a.presign_contract_id !== record.id);
+      parsedSfAllocations.forEach((alloc) => {
+        state.preSignSfAllocations.push({
+          id: state.preSignSfAllocations.length + 1,
+          presign_contract_id: record.id,
+          sf_snapshot_id: alloc.sf_snapshot_id,
+          pid: alloc.pid,
+          configuration_id: alloc.configuration_id,
+          allocation_ratio: alloc.allocation_ratio,
+          allocation_amount_excl_tax: alloc.allocation_amount_excl_tax,
+          allocation_amount_incl_tax: alloc.allocation_amount_incl_tax,
+          note: alloc.note,
         });
       });
       state.preSignPaymentNodes = state.preSignPaymentNodes.filter((n) => n.pre_sign_contract_id !== record.id);
@@ -1427,6 +1779,30 @@ function renderPreSignForm(record) {
           ...link,
           id: state.preSignLinks.length + 1,
           presign_contract_id: newId,
+        });
+      });
+      parsedPmsAllocations.forEach((alloc) => {
+        state.preSignPmsAllocations.push({
+          id: state.preSignPmsAllocations.length + 1,
+          presign_contract_id: newId,
+          pms_project_id: alloc.pms_project_id,
+          allocation_ratio: alloc.allocation_ratio,
+          allocation_amount_excl_tax: alloc.allocation_amount_excl_tax,
+          allocation_amount_incl_tax: alloc.allocation_amount_incl_tax,
+          note: alloc.note,
+        });
+      });
+      parsedSfAllocations.forEach((alloc) => {
+        state.preSignSfAllocations.push({
+          id: state.preSignSfAllocations.length + 1,
+          presign_contract_id: newId,
+          sf_snapshot_id: alloc.sf_snapshot_id,
+          pid: alloc.pid,
+          configuration_id: alloc.configuration_id,
+          allocation_ratio: alloc.allocation_ratio,
+          allocation_amount_excl_tax: alloc.allocation_amount_excl_tax,
+          allocation_amount_incl_tax: alloc.allocation_amount_incl_tax,
+          note: alloc.note,
         });
       });
       parsedPayments.forEach((node, idx) => {
@@ -1736,6 +2112,32 @@ function bindPaymentNodeCalculation(container) {
   });
   totalAmountInput?.addEventListener("input", recalc);
   recalc();
+}
+
+function bindAllocationCalculation(rows, type, totalIncl, totalExcl) {
+  const container = type === "pms" ? document.getElementById("pmsAllocationRows") : document.getElementById("sfAllocationRows");
+  if (!container) return;
+  const total = state.ui.presignAmountView === "incl" ? totalIncl : totalExcl;
+  container.querySelectorAll("input[name='allocation_ratio'], input[name='allocation_amount']").forEach((input, idx) => {
+    input.addEventListener("input", () => {
+      const ratioInput = container.querySelectorAll("input[name='allocation_ratio']")[idx];
+      const amountInput = container.querySelectorAll("input[name='allocation_amount']")[idx];
+      const ratio = Number(ratioInput?.value || 0);
+      const amount = Number(amountInput?.value || 0);
+      if (ratio && total) {
+        const computed = (ratio / 100) * total;
+        if (state.ui.presignAmountView === "incl") rows[idx].allocation_amount_incl_tax = computed;
+        else rows[idx].allocation_amount_excl_tax = computed;
+      } else if (amount && total) {
+        const computedRatio = (amount / total) * 100;
+        rows[idx].allocation_ratio = computedRatio;
+      }
+    });
+  });
+}
+
+function getPmsProject(projectId) {
+  return state.pmsProjects.find((p) => p.id === projectId);
 }
 
 function openLinkPicker(type, onConfirm) {
@@ -2482,9 +2884,9 @@ function renderMappingOverview() {
     if (filterState.project_complexity && project.project_complexity !== filterState.project_complexity) return false;
     if (filterState.project_phase && project.project_phase !== filterState.project_phase) return false;
     const status = getMappingStatus(project);
-    if (filterState.salesforce_status && status.salesforce.status !== filterState.salesforce_status) return false;
-    if (filterState.contract_status && status.contract.status !== filterState.contract_status) return false;
-    if (filterState.invoice_status && status.invoice.status !== filterState.invoice_status) return false;
+    if (filterState.salesforce_status && status.salesforce.label !== filterState.salesforce_status) return false;
+    if (filterState.contract_status && status.contract.label !== filterState.contract_status) return false;
+    if (filterState.invoice_status && status.invoice.label !== filterState.invoice_status) return false;
     if (filterState.anomaly_status && status.anomaly.state !== filterState.anomaly_status) return false;
     if (filterState.remain_min || filterState.remain_max) {
       if (status.invoiceRemain.value === null) return false;
