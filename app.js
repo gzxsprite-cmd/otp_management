@@ -943,6 +943,10 @@ function renderDetail(moduleId, id) {
     content.innerHTML = "<div class='panel'>记录不存在</div>";
     return;
   }
+  if (moduleId === "presign") {
+    renderPreSignDetail(record);
+    return;
+  }
   const auditLogs = state.auditLogs.filter((log) => log.entity_type === moduleId && log.entity_id === id).slice(0, 10);
   content.innerHTML = `
     <div class="panel">
@@ -1069,20 +1073,6 @@ function renderRelated(moduleId, record) {
 }
 
 function renderDetailExtras(moduleId, record) {
-  if (moduleId === "presign") {
-    const paymentNodes = state.preSignPaymentNodes.filter((n) => n.pre_sign_contract_id === record.id);
-    return `
-      <div class="panel">
-        <div class="page-title">代签文件快照</div>
-        ${renderFilePreview(record.source_file_url || "#", record.source_file_type)}
-        <div class="subtle">PDF快照（占位图）— 用于演示合同内容预览</div>
-      </div>
-      <div class="panel">
-        <div class="page-title">付款节点</div>
-        ${renderContractPaymentTable(paymentNodes)}
-      </div>
-    `;
-  }
   if (moduleId === "contract") {
     const presign = state.preSignContracts.find((p) => p.id === record.presign_contract_id);
     const links = presign ? state.preSignLinks.filter((l) => l.presign_contract_id === presign.id) : [];
@@ -1132,6 +1122,169 @@ function renderFilePreview(url, type) {
       <button data-preview-action="download">下载</button>
     </div>
     <img class="preview-image" src="assets/mock-pdf-page.svg" alt="PDF快照占位图" />
+  `;
+}
+
+function renderPreSignDetail(record) {
+  const content = document.getElementById("content");
+  const auditLogs = state.auditLogs.filter((log) => log.entity_type === "presign" && log.entity_id === record.id).slice(0, 10);
+  const amountView = state.ui.presignAmountView || "incl";
+  const totals = computePresignTotals(record, amountView);
+  const pmsAllocations = state.preSignPmsAllocations.filter((a) => a.presign_contract_id === record.id);
+  const sfAllocations = state.preSignSfAllocations.filter((a) => a.presign_contract_id === record.id);
+  const nonProjectCharges = state.nonProjectCharges.filter((c) => c.presign_contract_id === record.id);
+  const paymentNodes = state.preSignPaymentNodes.filter((n) => n.pre_sign_contract_id === record.id);
+  const requireSf = ["new_acquisition", "mixed"].includes(record.project_nominal_type);
+  const sfStatus = requireSf ? (sfAllocations.length ? "已满足" : "缺少") : "选填";
+  content.innerHTML = `
+    <div class="panel">
+      <div class="page-title">代签合同/协议 / 详情</div>
+      <div class="form-actions">
+        <button onclick="location.hash='#/module/presign'">返回列表</button>
+        ${hasPermission(getUser(), "presign", "change") ? `<button class="primary" onclick="location.hash='#/module/presign/edit/${record.id}'">编辑</button>` : ""}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="page-title">文件快照与基本信息</div>
+      ${renderFilePreview(record.source_file_url || "#", record.source_file_type)}
+      <div class="subtle">PDF快照（占位图）— 用于演示合同内容预览</div>
+      <div class="form-grid">
+        <div><div class="subtle">客户</div><div>${getCustomer(record.customer_id)?.short_name || ""}</div></div>
+        <div><div class="subtle">客户合同号</div><div>${record.customer_contract_no || ""}</div></div>
+        <div><div class="subtle">合同标题</div><div>${record.contract_title || ""}</div></div>
+        <div><div class="subtle">产品类型</div><div>${getProduct(record.product_type_id)?.name || ""}</div></div>
+        <div><div class="subtle">销售区域</div><div>${getSalesRegion(record.sales_region_id)?.name || ""}</div></div>
+        <div><div class="subtle">车型项目</div><div>${record.customer_vehicle_project_name || ""}</div></div>
+        <div><div class="subtle">开发费名称</div><div>${record.development_fee_name || ""}</div></div>
+        <div><div class="subtle">开发原因</div><div>${record.development_reason || ""}</div></div>
+        <div><div class="subtle">不含税金额</div><div>${record.total_amount_excl_tax || 0}</div></div>
+        <div><div class="subtle">含税总金额</div><div>${record.total_amount_incl_tax || 0}</div></div>
+        <div><div class="subtle">付款条款摘要</div><div>${record.payment_terms_text || ""}</div></div>
+        <div><div class="subtle">IP归属</div><div>${record.ip_ownership || ""}</div></div>
+        <div><div class="subtle">IP备注</div><div>${record.ip_notes || ""}</div></div>
+        <div><div class="subtle">名义类型</div><div>${record.project_nominal_type || ""}</div></div>
+        <div><div class="subtle">状态</div><div>${record.status}</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="page-title">非项目金额分配</div>
+      ${renderNonProjectTable(nonProjectCharges)}
+    </div>
+    <div class="panel">
+      <div class="page-title">付款节点</div>
+      <div class="subtle">付款节点合计（按比例/金额折算）= ${totals.paymentNodeTotal.toFixed(2)} ${Math.abs(totals.paymentNodeTotal - totals.contractTotalIncl) > 0.01 ? "<span class='status-icon status-bad'>!</span>" : ""}</div>
+      ${renderContractPaymentTable(paymentNodes)}
+    </div>
+    <div class="panel">
+      <div class="page-title">关联对象（映射与分配）</div>
+      <div class="subtle">项目总金额 = 合同总金额 − 非项目总金额</div>
+      <div class="form-actions">
+        <span class="subtle">金额口径：</span>
+        <button type="button" id="detailAmountView">${amountView === "incl" ? "含税" : "未税"}</button>
+        <span class="subtle">Salesforce要求：${sfStatus}</span>
+      </div>
+      <div class="subtle" id="detailMappingSummary">${totals.summaryText}</div>
+      <div class="panel">
+        <div class="page-title">PMS项目关联与金额分配</div>
+        ${renderAllocationTable(pmsAllocations, "pms", amountView)}
+      </div>
+      <div class="panel">
+        <div class="page-title">Salesforce项目关联与金额分配</div>
+        ${renderAllocationTable(sfAllocations, "sf", amountView)}
+      </div>
+      <div class="subtle">${totals.validationText}</div>
+    </div>
+    <div class="panel">
+      <div class="page-title">审计日志</div>
+      <div class="audit-log">
+        ${auditLogs.map((log) => `<div>${log.timestamp} · ${getUserById(log.actor_user_id)?.display_name || ""} · ${log.action}</div>`).join("")}
+      </div>
+    </div>
+  `;
+  bindPreviewToolbar();
+  content.querySelector("#detailAmountView").addEventListener("click", () => {
+    state.ui.presignAmountView = amountView === "incl" ? "excl" : "incl";
+    renderPreSignDetail(record);
+  });
+}
+
+function computePresignTotals(record, amountView) {
+  const contractTotalIncl = Number(record.total_amount_incl_tax || 0);
+  const contractTotalExcl = Number(record.total_amount_excl_tax || 0);
+  const nonProjectCharges = state.nonProjectCharges.filter((c) => c.presign_contract_id === record.id);
+  const nonProjectSum = nonProjectCharges.reduce((sum, row) => sum + Number(row.amount_incl_tax || 0), 0);
+  const projectTotalIncl = Math.max(0, contractTotalIncl - nonProjectSum);
+  const projectTotalExcl = contractTotalIncl ? Math.max(0, contractTotalExcl - (nonProjectSum / contractTotalIncl) * contractTotalExcl) : contractTotalExcl;
+  const pmsAllocations = state.preSignPmsAllocations.filter((a) => a.presign_contract_id === record.id);
+  const sfAllocations = state.preSignSfAllocations.filter((a) => a.presign_contract_id === record.id);
+  const pmsSum = pmsAllocations.reduce((sum, row) => sum + Number(amountView === "incl" ? row.allocation_amount_incl_tax : row.allocation_amount_excl_tax || 0), 0);
+  const sfSum = sfAllocations.reduce((sum, row) => sum + Number(amountView === "incl" ? row.allocation_amount_incl_tax : row.allocation_amount_excl_tax || 0), 0);
+  const paymentNodes = state.preSignPaymentNodes.filter((n) => n.pre_sign_contract_id === record.id);
+  const paymentNodeTotal = paymentNodes.reduce((sum, node) => {
+    if (node.pay_amount) return sum + Number(node.pay_amount);
+    if (node.pay_ratio && contractTotalIncl) return sum + (node.pay_ratio / 100) * contractTotalIncl;
+    return sum;
+  }, 0);
+  const summaryText = `合同总金额（含税）：${contractTotalIncl}｜非项目总金额（含税）：${nonProjectSum}｜项目总金额（含税）：${projectTotalIncl}｜PMS已分配：${pmsSum.toFixed(2)} / 剩余：${(projectTotalIncl - pmsSum).toFixed(2)}｜Salesforce已分配：${sfSum.toFixed(2)} / 剩余：${(projectTotalIncl - sfSum).toFixed(2)}`;
+  const validationText = `${nonProjectSum > contractTotalIncl ? "非项目总金额超过合同总金额；" : ""}${Math.abs(pmsSum - projectTotalIncl) > 0.01 ? "PMS分配未匹配项目总金额；" : ""}${Math.abs(sfSum - projectTotalIncl) > 0.01 ? "Salesforce分配未匹配项目总金额；" : ""}`;
+  return {
+    contractTotalIncl,
+    contractTotalExcl,
+    nonProjectSum,
+    projectTotalIncl,
+    projectTotalExcl,
+    pmsSum,
+    sfSum,
+    paymentNodeTotal,
+    summaryText,
+    validationText: validationText || "校验通过",
+  };
+}
+
+function renderNonProjectTable(rows) {
+  if (!rows.length) return "<div class='subtle'>暂无非项目事项</div>";
+  return `
+    <table class="table">
+      <thead><tr><th>事由</th><th>金额（含税）</th><th>备注</th></tr></thead>
+      <tbody>
+        ${rows
+          .map(
+            (row) => `
+          <tr>
+            <td>${row.reason}</td>
+            <td>${row.amount_incl_tax}</td>
+            <td>${row.note || ""}</td>
+          </tr>
+        `
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderAllocationTable(rows, type, amountView) {
+  if (!rows.length) return "<div class='subtle'>暂无分配</div>";
+  return `
+    <table class="table">
+      <thead><tr><th>${type === "pms" ? "PMS项目" : "Salesforce项目"}</th><th>比例%</th><th>金额(${amountView === "incl" ? "含税" : "未税"})</th><th>备注</th></tr></thead>
+      <tbody>
+        ${rows
+          .map((row) => {
+            const label = type === "pms" ? getPmsProject(row.pms_project_id)?.project_name || "" : `${row.pid || ""} ${row.configuration_id ? getConfiguration(row.configuration_id)?.name : ""}`;
+            const amount = amountView === "incl" ? row.allocation_amount_incl_tax : row.allocation_amount_excl_tax;
+            return `
+            <tr>
+              <td>${label}</td>
+              <td>${row.allocation_ratio ?? ""}</td>
+              <td>${amount ?? ""}</td>
+              <td>${row.note || ""}</td>
+            </tr>
+          `;
+          })
+          .join("")}
+      </tbody>
+    </table>
   `;
 }
 
@@ -1320,6 +1473,19 @@ function renderPreSignForm(record) {
           ${renderSelect("status", "状态", enums.presignStatus, record?.status, true)}
         </div>
         <div class="panel">
+          <div class="page-title">非项目金额分配</div>
+          <div class="subtle">非项目金额将从合同总金额中扣除，得到项目总金额。</div>
+          <div id="nonProjectSummary" class="subtle"></div>
+          <div id="nonProjectRows"></div>
+          <button type="button" id="addNonProject">+ 添加非项目事项</button>
+        </div>
+        <div class="panel">
+          <div class="page-title">付款节点</div>
+          <div id="paymentNodeRows"></div>
+          <button type="button" id="addPaymentNode">+ 添加节点</button>
+          <div class="subtle" id="paymentWarning"></div>
+        </div>
+        <div class="panel">
           <div class="page-title">项目映射</div>
           <div class="form-actions">
             <span class="subtle">金额口径：</span>
@@ -1347,19 +1513,6 @@ function renderPreSignForm(record) {
             <div id="sfAllocationSummary" class="subtle"></div>
             <div id="sfAllocationRows"></div>
           </div>
-          <div class="panel">
-            <div class="page-title">非项目金额分配</div>
-            <div class="subtle">非项目金额将从合同总金额中扣除，得到项目总金额。</div>
-            <div id="nonProjectSummary" class="subtle"></div>
-            <div id="nonProjectRows"></div>
-            <button type="button" id="addNonProject">+ 添加非项目事项</button>
-          </div>
-        </div>
-        <div class="panel">
-          <div class="page-title">付款节点</div>
-          <div id="paymentNodeRows"></div>
-          <button type="button" id="addPaymentNode">+ 添加节点</button>
-          <div class="subtle" id="paymentWarning"></div>
         </div>
       </form>
       <div class="form-actions">
